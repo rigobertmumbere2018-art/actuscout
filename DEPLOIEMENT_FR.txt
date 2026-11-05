@@ -15,7 +15,7 @@ CONTENU DU PROJET
 - API des articles et albums publiés
 - Administration /admin avec authentification
 - Gestion des articles et albums
-- Import de médias Google Photos Picker vers R2
+- Import de médias Google Photos Picker vers R2\n- Candidatures blogueurs, CV PDF, validation administrative et espace de soumission d’articles\n- Page de soutien / dons (coordonnées de paiement à compléter)
 - Stockage des métadonnées de galerie dans D1
 
 DÉPLOIEMENT
