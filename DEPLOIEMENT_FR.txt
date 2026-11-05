@@ -1,0 +1,49 @@
+ACTUSCOUT — MISE À JOUR DU WORKER EXISTANT
+==========================================
+Worker cible : bold-pine-89ed
+Base D1 créée dans Cloudflare : actuscout-db (région Europe de l’Ouest)
+
+CE QUE CONTIENT LE PAQUET
+- Site public ActuScout (identité visuelle existante conservée)
+- Affichage dynamique des articles publiés depuis D1
+- Affichage dynamique des albums publiés depuis D1
+- Espace /admin avec connexion
+- Gestion des articles et albums : créer, modifier, publier/brouillon, supprimer
+- Migration SQL et deux albums de départ préenregistrés
+- Worker API avec sessions signées et cookies HttpOnly/Secure/SameSite
+
+IMPORTANT AVANT DÉPLOIEMENT
+La base D1 existe déjà. Ne la recrée pas. Il faut récupérer son identifiant database_id depuis
+la page de détails de la base D1, puis remplacer REMPLACER_PAR_ID_D1 dans wrangler.toml.
+Le déploiement exige Node.js et une authentification Cloudflare via Wrangler. Ce paquet n'est
+pas un simple dossier d'images à téléverser dans la page statique actuelle.
+
+CONFIGURATION (une seule fois)
+1. Installer Node.js LTS : https://nodejs.org/
+2. Extraire le ZIP dans un dossier sur le PC.
+3. Ouvrir PowerShell dans le dossier ActuScout_FullStack.
+4. Exécuter : npm install
+5. Exécuter : npx wrangler login (autoriser Cloudflare dans le navigateur)
+6. Dans wrangler.toml, remplacer REMPLACER_PAR_ID_D1 par le database_id exact de la base
+   actuscout-db déjà créée. Ne pas modifier le nom du Worker ni le nom de la base.
+7. Exécuter : npx wrangler d1 migrations apply actuscout-db --remote
+8. Définir les secrets avec des valeurs fortes et uniques :
+   npx wrangler secret put ADMIN_USERNAME
+   npx wrangler secret put ADMIN_PASSWORD
+   npx wrangler secret put SESSION_SECRET
+   Pour SESSION_SECRET, utiliser une valeur aléatoire d'au moins 32 caractères.
+   Ne jamais envoyer ces secrets dans le chat ni les inscrire dans un fichier.
+9. Exécuter : npx wrangler deploy
+
+VÉRIFICATIONS APRÈS DÉPLOIEMENT
+- https://bold-pine-89ed.rigobertmumbere2018.workers.dev/api/health
+  Doit répondre {"ok":true}.
+- Administration : https://bold-pine-89ed.rigobertmumbere2018.workers.dev/admin
+- Site public : https://bold-pine-89ed.rigobertmumbere2018.workers.dev
+
+NOTES
+- Les deux albums de départ sont insérés par la migration. L'accès aux photos dépend des
+  permissions de partage Google configurées sur les dossiers/albums.
+- Les liens Drive/Google Photos sont ouverts dans un nouvel onglet. L'intégration complète
+  des photos en galerie nécessitera ultérieurement les API Google et leurs autorisations.
+- Ne supprime pas l'ancien déploiement avant d'avoir vérifié le nouveau.
