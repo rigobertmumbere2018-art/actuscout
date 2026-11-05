@@ -38,7 +38,7 @@ if(p==='/api/upload'&&m==='POST'){if(!await authorized(req,env))return json({err
 if(p==='/api/blogger/apply'&&m==='POST'){
  const f=await req.formData(),name=clean(f.get('name'),160),email=clean(f.get('email'),200).toLowerCase(),phone=clean(f.get('phone'),60),city=clean(f.get('city'),120),motivation=clean(f.get('motivation'),5000),file=f.get('cv');
  if(!name||!email||!phone||!motivation||!file||!file.size)return json({error:'Tous les champs et le CV PDF sont obligatoires.'},400);
- if(!/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(email))return json({error:'Adresse e-mail invalide.'},400);
+ if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return json({error:'Adresse e-mail invalide.'},400);
  if(file.type!=='application/pdf'||file.size>5*1024*1024)return json({error:'Le CV doit être un PDF de 5 Mo maximum.'},400);
  const duplicate=await env.DB.prepare("SELECT id FROM blogger_applications WHERE email=? AND status='pending'").bind(email).first();if(duplicate)return json({error:'Une candidature en attente existe déjà pour cette adresse.'},409);
  const id=crypto.randomUUID(),key='candidatures/'+id+'.pdf';await env.GALLERY.put(key,await file.arrayBuffer(),{httpMetadata:{contentType:'application/pdf'}});
