@@ -34,7 +34,7 @@ CONFIGURATION GOOGLE CLOUD
    https://actuscout.rigobertmumbere2018.workers.dev/api/google/callback
 7. Enregistrer le Client ID et le Client secret dans les secrets du Worker.
 8. Scope utilisé :
-   https://www.googleapis.com/auth/photospicker.mediaitems.readonly
+   https://www.googleapis.com/auth/photospicker.mediaitems.readonly\n   https://www.googleapis.com/auth/drive.readonly
 
 UTILISATION
 1. Se connecter à /admin.
