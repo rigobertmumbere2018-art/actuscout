@@ -1,0 +1,18 @@
+name = "bold-pine-89ed"
+main = "src/index.js"
+compatibility_date = "2026-11-04"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "actuscout-db"
+database_id = "43dd1d11-9b86-4166-b371-8ca0b8657d7a"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "GALLERY"
+bucket_name = "actuscout-galeries"
