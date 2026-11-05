@@ -1,49 +1,50 @@
-ACTUSCOUT — MISE À JOUR DU WORKER EXISTANT
-==========================================
-Worker cible : bold-pine-89ed
-Base D1 créée dans Cloudflare : actuscout-db (région Europe de l’Ouest)
+ACTUSCOUT — DÉPLOIEMENT DU WORKER EXISTANT
+===========================================
 
-CE QUE CONTIENT LE PAQUET
-- Site public ActuScout (identité visuelle existante conservée)
-- Affichage dynamique des articles publiés depuis D1
-- Affichage dynamique des albums publiés depuis D1
-- Espace /admin avec connexion
-- Gestion des articles et albums : créer, modifier, publier/brouillon, supprimer
-- Migration SQL et deux albums de départ préenregistrés
-- Worker API avec sessions signées et cookies HttpOnly/Secure/SameSite
+Worker de production : actuscout
+URL : https://actuscout.rigobertmumbere2018.workers.dev
+Base D1 : actuscout-db
+Bucket R2 : actuscout-galeries
 
-IMPORTANT AVANT DÉPLOIEMENT
-La base D1 existe déjà. Ne la recrée pas. Il faut récupérer son identifiant database_id depuis
-la page de détails de la base D1, puis remplacer REMPLACER_PAR_ID_D1 dans wrangler.toml.
-Le déploiement exige Node.js et une authentification Cloudflare via Wrangler. Ce paquet n'est
-pas un simple dossier d'images à téléverser dans la page statique actuelle.
+Le fichier wrangler.toml est déjà renseigné avec les liaisons D1 et R2 existantes.
+Ne recrée pas la base D1 ni le bucket R2. Ne supprime aucun album, article ou fichier
+déjà enregistré.
 
-CONFIGURATION (une seule fois)
+CONTENU DU PROJET
+- Site public ActuScout et ses ressources visuelles existantes
+- API des articles et albums publiés
+- Administration /admin avec authentification
+- Gestion des articles et albums
+- Import de médias Google Photos Picker vers R2
+- Stockage des métadonnées de galerie dans D1
+
+DÉPLOIEMENT
 1. Installer Node.js LTS : https://nodejs.org/
-2. Extraire le ZIP dans un dossier sur le PC.
-3. Ouvrir PowerShell dans le dossier ActuScout_FullStack.
-4. Exécuter : npm install
-5. Exécuter : npx wrangler login (autoriser Cloudflare dans le navigateur)
-6. Dans wrangler.toml, remplacer REMPLACER_PAR_ID_D1 par le database_id exact de la base
-   actuscout-db déjà créée. Ne pas modifier le nom du Worker ni le nom de la base.
-7. Exécuter : npx wrangler d1 migrations apply actuscout-db --remote
-8. Définir les secrets avec des valeurs fortes et uniques :
-   npx wrangler secret put ADMIN_USERNAME
-   npx wrangler secret put ADMIN_PASSWORD
-   npx wrangler secret put SESSION_SECRET
-   Pour SESSION_SECRET, utiliser une valeur aléatoire d'au moins 32 caractères.
-   Ne jamais envoyer ces secrets dans le chat ni les inscrire dans un fichier.
-9. Exécuter : npx wrangler deploy
+2. Ouvrir un terminal dans le dossier du projet.
+3. Installer les dépendances si le projet en possède : npm install
+4. Se connecter à Cloudflare si nécessaire : npx wrangler login
+5. Vérifier le fichier wrangler.toml et les liaisons existantes.
+6. Déployer : npx wrangler deploy
+
+SECRETS DU WORKER
+Configurer dans Cloudflare les secrets suivants avec des valeurs fortes :
+- ADMIN_USERNAME
+- ADMIN_PASSWORD
+- SESSION_SECRET (valeur aléatoire d'au moins 32 caractères)
+- GOOGLE_CLIENT_ID
+- GOOGLE_CLIENT_SECRET
+- GOOGLE_TOKEN_ENCRYPTION_KEY (valeur aléatoire longue)
+
+Variable non secrète requise pour les médias R2 :
+R2_PUBLIC_BASE = https://pub-e89d0ce066dcb4b32a5acdfc6e80af4cb.r2.dev
+
+Ne jamais inscrire les secrets dans GitHub, dans le code source ou dans un document public.
+Ne jamais partager un jeton Cloudflare dans une conversation.
 
 VÉRIFICATIONS APRÈS DÉPLOIEMENT
-- https://bold-pine-89ed.rigobertmumbere2018.workers.dev/api/health
-  Doit répondre {"ok":true}.
-- Administration : https://bold-pine-89ed.rigobertmumbere2018.workers.dev/admin
-- Site public : https://bold-pine-89ed.rigobertmumbere2018.workers.dev
+- Santé API : https://actuscout.rigobertmumbere2018.workers.dev/api/health
+- Administration : https://actuscout.rigobertmumbere2018.workers.dev/admin
+- Site public : https://actuscout.rigobertmumbere2018.workers.dev
 
-NOTES
-- Les deux albums de départ sont insérés par la migration. L'accès aux photos dépend des
-  permissions de partage Google configurées sur les dossiers/albums.
-- Les liens Drive/Google Photos sont ouverts dans un nouvel onglet. L'intégration complète
-  des photos en galerie nécessitera ultérieurement les API Google et leurs autorisations.
-- Ne supprime pas l'ancien déploiement avant d'avoir vérifié le nouveau.
+Avant toute migration D1, vérifier les migrations déjà appliquées afin d'éviter de rejouer
+une migration ou de modifier les données existantes.
