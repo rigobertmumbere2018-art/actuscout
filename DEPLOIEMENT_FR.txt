@@ -33,9 +33,9 @@ Configurer dans Cloudflare les secrets suivants avec des valeurs fortes :
 - SESSION_SECRET (valeur aléatoire d'au moins 32 caractères)
 - GOOGLE_CLIENT_ID
 - GOOGLE_CLIENT_SECRET
-- GOOGLE_TOKEN_ENCRYPTION_KEY (valeur aléatoire longue)
+- GOOGLE_TOKEN_ENCRYPTION_KEY (valeur aléatoire longue)\n- RESEND_API_KEY (facultatif, pour les notifications e-mail)\n- ACTUSCOUT_EMAIL_FROM (adresse expéditrice vérifiée chez Resend, facultatif)\n- ACTUSCOUT_ADMIN_EMAIL (destinataire des candidatures ; par défaut actuscout@gmail.com)
 
-Variable non secrète requise pour les médias R2 :
+Les notifications automatiques de candidature et d'acceptation ne partent que si RESEND_API_KEY\net ACTUSCOUT_EMAIL_FROM sont configurés avec un expéditeur validé par Resend.\n\nVariable non secrète requise pour les médias R2 :
 R2_PUBLIC_BASE = https://pub-e89d0ce066dcb4b32a5acdfc6e80af4cb.r2.dev
 
 Ne jamais inscrire les secrets dans GitHub, dans le code source ou dans un document public.
