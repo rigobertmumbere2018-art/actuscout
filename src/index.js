@@ -43,6 +43,7 @@ if(p==='/api/blogger/apply'&&m==='POST'){
  if(!name||!email||!phone||!motivation||!file||!file.size)return json({error:'Tous les champs et le CV PDF sont obligatoires.'},400);
  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return json({error:'Adresse e-mail invalide.'},400);
  if(file.type!=='application/pdf'||file.size>5*1024*1024)return json({error:'Le CV doit être un PDF de 5 Mo maximum.'},400);
+ if(await file.slice(0,5).text()!=='%PDF-')return json({error:'Le fichier transmis ne possède pas une signature PDF valide.'},415);
  const duplicate=await env.DB.prepare("SELECT id FROM blogger_applications WHERE email=? AND status='pending'").bind(email).first();if(duplicate)return json({error:'Une candidature en attente existe déjà pour cette adresse.'},409);
  const id=crypto.randomUUID(),key='candidatures/'+id+'.pdf';await env.GALLERY.put(key,await file.arrayBuffer(),{httpMetadata:{contentType:'application/pdf'}});
  await env.DB.prepare("INSERT INTO blogger_applications(id,name,email,phone,city,motivation,cv_key,status) VALUES(?,?,?,?,?,?,?,'pending')").bind(id,name,email,phone,city,motivation,key).run();
