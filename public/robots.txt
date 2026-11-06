@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /admin-blogueurs
+Disallow: /api/
+Disallow: /blogueur
+Disallow: /blogueur/
+
+Sitemap: https://actuscout.rigobertmumbere2018.workers.dev/sitemap.xml
