@@ -70,7 +70,7 @@ document.getElementById('contactForm').addEventListener('submit',e=>{e.preventDe
       const albums=await ar.json(), section=document.querySelector('#albums'), grid=document.querySelector('#homeAlbumGrid');
       if(grid && albums.length){grid.innerHTML=''; for(const a of albums){
         const card=document.createElement('article'); card.className='album';
-        if(a.cover_url){const im=document.createElement('img');im.src=a.cover_url;im.alt=a.title||'Album ActuScout';card.appendChild(im)}
+        if(a.cover_url||(Array.isArray(a.photos)&&a.photos[0]?.public_url)){const im=document.createElement('img');im.src=a.cover_url||(a.photos[0]&&a.photos[0].public_url);im.alt=a.title||'Album ActuScout';card.appendChild(im)}
         const info=document.createElement('div');info.className='album-info';
         const small=document.createElement('small');small.textContent=a.event_date||'Album photo';
         const h=document.createElement('h3');h.textContent=a.title||'';info.append(small,h);
