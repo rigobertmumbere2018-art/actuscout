@@ -49,6 +49,15 @@ if(p==='/api/blogger/apply'&&m==='POST'){
 }
 if(p==='/api/blogger/login'&&m==='POST'){const b=await req.json().catch(()=>({})),email=clean(b.email,200).toLowerCase(),password=clean(b.password,300);const row=await env.DB.prepare("SELECT id,name,email,phone,status,password_hash FROM bloggers WHERE email=? AND status='active'").bind(email).first();if(!row||!env.SESSION_SECRET||await mac(env.SESSION_SECRET,password)!==row.password_hash)return json({error:'Identifiants incorrects ou compte non activé.'},401);const {password_hash,...profile}=row;return json({ok:true,blogger:profile},200,{'set-cookie':BLOG_COOKIE+'='+await makeBloggerSession(env,row.id)+'; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=28800'})}
 if(p==='/api/blogger/logout'&&m==='POST')return json({ok:true},200,{'set-cookie':BLOG_COOKIE+'=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0'});
+if(p==='/api/blogger/password'&&m==='POST'){
+ const blogger=await bloggerAuthorized(req,env);if(!blogger)return json({error:'Connexion blogueur requise.'},401);
+ const b=await req.json().catch(()=>({})),current=clean(b.current_password,300),next=clean(b.new_password,300);
+ if(next.length<10)return json({error:'Le nouveau mot de passe doit contenir au moins 10 caractères.'},400);
+ const row=await env.DB.prepare("SELECT password_hash FROM bloggers WHERE id=? AND status='active'").bind(blogger.id).first();
+ if(!row||!env.SESSION_SECRET||await mac(env.SESSION_SECRET,current)!==row.password_hash)return json({error:'Mot de passe actuel incorrect.'},401);
+ await env.DB.prepare('UPDATE bloggers SET password_hash=? WHERE id=?').bind(await mac(env.SESSION_SECRET,next),blogger.id).run();
+ return json({ok:true,message:'Mot de passe modifié.'});
+}
 if(p.startsWith('/api/blogger/')){
  const blogger=await bloggerAuthorized(req,env);if(!blogger)return json({error:'Connexion blogueur requise.'},401);
  if(p==='/api/blogger/me'&&m==='GET')return json(blogger);
@@ -78,5 +87,5 @@ if(m==='GET'&&!id){const r=await env.DB.prepare('SELECT * FROM '+kind+' ORDER BY
 if(m==='GET'&&id){const r=await env.DB.prepare('SELECT * FROM '+kind+' WHERE id=?').bind(id).first();return r?json(r):json({error:'Introuvable.'},404)}
 if((m==='POST'&&!id)||(m==='PUT'&&id)){const b=await req.json().catch(()=>({}));for(const f of cfg.required)if(!clean(b[f],cfg.limits[f]))return json({error:'Champ obligatoire : '+f},400);const vals=cfg.fields.map(f=>f==='status'?(['draft','pending','published'].includes(b[f])?b[f]:'draft'):clean(b[f],cfg.limits[f]));if(m==='POST'){const newId=crypto.randomUUID(),cols=['id',...cfg.fields],marks=cols.map(()=>'?').join(',');await env.DB.prepare('INSERT INTO '+kind+'('+cols.join(',')+') VALUES('+marks+')').bind(newId,...vals).run();return json({ok:true,id:newId},201)}await env.DB.prepare('UPDATE '+kind+' SET '+cfg.fields.map(f=>f+'=?').join(',')+',updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(...vals,id).run();return json({ok:true})}
 if(m==='DELETE'&&id){await env.DB.prepare('DELETE FROM '+kind+' WHERE id=?').bind(id).run();return json({ok:true})}return json({error:'Méthode non autorisée.'},405)}
-const pageRoutes={'/albums':'/albums.html','/albums/':'/albums.html','/admin':'/admin.html','/admin/':'/admin.html','/admin-blogueurs':'/admin-blogueurs.html','/devenir-blogueur':'/devenir-blogueur.html','/faire-un-don':'/faire-un-don.html','/blogueur':'/devenir-blogueur.html','/blogueur/':'/devenir-blogueur.html'};
+const pageRoutes={'/albums':'/albums.html','/albums/':'/albums.html','/admin':'/admin.html','/admin/':'/admin.html','/admin-blogueurs':'/admin-blogueurs.html','/devenir-blogueur':'/devenir-blogueur.html','/faire-un-don':'/faire-un-don.html','/blogueur':'/blogueur.html','/blogueur/':'/blogueur.html'};
 export default {async fetch(req,env){const u=new URL(req.url);try{if(u.pathname.startsWith('/api/'))return await api(req,env);const assetPath=pageRoutes[u.pathname];if(assetPath){const assetUrl=new URL(assetPath,u.origin);assetUrl.search=u.search;return env.ASSETS.fetch(new Request(assetUrl,req))}return env.ASSETS.fetch(req)}catch(e){return json({error:'Erreur serveur.'},500)}}};
