@@ -50,11 +50,11 @@ if(p==='/api/blogger/apply'&&m==='POST'){
  await env.DB.prepare("INSERT INTO blogger_applications(id,name,email,phone,city,motivation,cv_key,status) VALUES(?,?,?,?,?,?,?,'pending')").bind(id,name,email,phone,city,motivation,key).run();
  return json({ok:true,message:'Candidature reçue. Elle sera examinée par la rédaction ActuScout.'},201)
 }
-if(p==='/api/blogger/login'&&m==='POST'){const b=await req.json().catch(()=>({})),email=clean(b.email,200).toLowerCase(),password=clean(b.password,300);const row=await env.DB.prepare("SELECT id,name,email,phone,status,password_hash FROM bloggers WHERE email=? AND status='active'").bind(email).first();if(!row||!env.SESSION_SECRET||await mac(env.SESSION_SECRET,password)!==row.password_hash)return json({error:'Identifiants incorrects ou compte non activé.'},401);const {password_hash,...profile}=row;return json({ok:true,blogger:profile},200,{'set-cookie':BLOG_COOKIE+'='+await makeBloggerSession(env,row.id)+'; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=28800'})}
+if(p==='/api/blogger/login'&&m==='POST'){const b=await req.json().catch(()=>({})),email=clean(b.email,200).toLowerCase(),password=typeof b.password==='string'?b.password.slice(0,300):'';const row=await env.DB.prepare("SELECT id,name,email,phone,status,password_hash FROM bloggers WHERE email=? AND status='active'").bind(email).first();if(!row||!env.SESSION_SECRET||await mac(env.SESSION_SECRET,password)!==row.password_hash)return json({error:'Identifiants incorrects ou compte non activé.'},401);const {password_hash,...profile}=row;return json({ok:true,blogger:profile},200,{'set-cookie':BLOG_COOKIE+'='+await makeBloggerSession(env,row.id)+'; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=28800'})}
 if(p==='/api/blogger/logout'&&m==='POST')return json({ok:true},200,{'set-cookie':BLOG_COOKIE+'=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0'});
 if(p==='/api/blogger/password'&&m==='POST'){
  const blogger=await bloggerAuthorized(req,env);if(!blogger)return json({error:'Connexion blogueur requise.'},401);
- const b=await req.json().catch(()=>({})),current=clean(b.current_password,300),next=clean(b.new_password,300);
+ const b=await req.json().catch(()=>({})),current=typeof b.current_password==='string'?b.current_password.slice(0,300):'',next=typeof b.new_password==='string'?b.new_password.slice(0,300):'';
  if(next.length<10)return json({error:'Le nouveau mot de passe doit contenir au moins 10 caractères.'},400);
  const row=await env.DB.prepare("SELECT password_hash FROM bloggers WHERE id=? AND status='active'").bind(blogger.id).first();
  if(!row||!env.SESSION_SECRET||await mac(env.SESSION_SECRET,current)!==row.password_hash)return json({error:'Mot de passe actuel incorrect.'},401);
