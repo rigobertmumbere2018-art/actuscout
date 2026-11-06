@@ -100,7 +100,7 @@ document.getElementById('contactForm').addEventListener('submit',e=>{e.preventDe
         grid.appendChild(card);
       }}
     }
-  } catch(e) { console.warn('Chargement des contenus ActuScout indisponible',e); }
+  } catch(e) { const grid=document.querySelector('#homeAlbumGrid');if(grid&&grid.querySelector('.album-empty')?.textContent.includes('Chargement'))grid.innerHTML='<p class="album-empty">Impossible de charger les albums pour le moment. Réessayez dans quelques instants.</p>';console.warn('Chargement des contenus ActuScout indisponible',e); }
 })();
 </script>
 </body></html>
