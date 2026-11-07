@@ -18,7 +18,10 @@ function mockDb({ all = [] } = {}) {
       return {
         bind() { return this; },
         async first() { return null; },
-        async all() { return { results: all }; },
+        async all() {
+          const results = typeof all === 'function' ? all(sql) : all;
+          return { results };
+        },
         async run() { return { meta: { changes: 0 } }; },
       };
     },
@@ -38,12 +41,12 @@ test('admin API denies unauthenticated access without querying D1', async () => 
   assert.equal(DB.calls.length, 0);
 });
 
-test('public albums API returns published rows', async () => {
+test('public albums API returns published rows and independently loads photo rows', async () => {
   const rows = [{ id: 'public-album', title: 'Album public', status: 'published' }];
-  const DB = mockDb({ all: rows });
+  const DB = mockDb({ all: (sql) => sql.includes('FROM albums WHERE') ? rows : [] });
   const response = await worker.fetch(new Request('https://unit.test/api/public/albums'), { DB });
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), rows);
+  assert.deepEqual(await response.json(), [{ ...rows[0], photos: [] }]);
   assert.match(DB.calls[0], /status='published'/);
 });
 
