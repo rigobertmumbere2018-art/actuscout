@@ -74,12 +74,20 @@ footer{background:#211238;padding:42px 0 20px}.footcol a.social-link{display:fle
 <section class="hero"><div class="wrap hero-grid">
 <article class="hero-card hero-carousel" aria-label="Photographies du scoutisme africain" aria-roledescription="carrousel">
   <div class="hero-slides">
-    <div class="hero-slide is-active"><img src="/assets/actuscout-slide-1.jpg" alt="Activité de scoutisme en Afrique" fetchpriority="high"></div>
-    <div class="hero-slide"><img src="/assets/actuscout-slide-2.jpg" alt="Rencontre de jeunes scouts" loading="lazy"></div>
-    <div class="hero-slide"><img src="/assets/actuscout-slide-3.jpg" alt="Engagement des communautés scoutes" loading="lazy"></div>
+    <div class="hero-slide is-active"><img src="/assets/863541518_1117114961292163_8818196688326040411_n.jpg" alt="Activité de scoutisme en Afrique" fetchpriority="high"></div>
+    <div class="hero-slide"><img src="/assets/5bf4ae9d-a5ae-486a-b20c-a7e3a7edd754.jpg" alt="Rencontre de jeunes scouts" loading="lazy"></div>
+    <div class="hero-slide"><img src="/assets/648806201_122204257352499270_4428602126612300112_n.jpg" alt="Engagement des communautés scoutes" loading="lazy"></div>
+    <div class="hero-slide"><img src="/assets/661073012_122206525382499270_8623554627522378335_n.jpg" alt="Activités des scouts" loading="lazy"></div>
+    <div class="hero-slide"><img src="/assets/actuscout-slide-5.jpg" alt="Cinquième photographie ActuScout" loading="lazy"></div>
   </div>
   <div class="hero-caption"><span class="tag">À la une · ActuScout</span><h2>Faire rayonner l’engagement scout.</h2><p>Des histoires, des actions et des idées qui rapprochent les communautés et inspirent les générations.</p>
-    <div class="hero-dots" aria-label="Choisir une photographie"><button class="is-active" type="button" aria-label="Photographie 1" aria-current="true"></button><button type="button" aria-label="Photographie 2"></button><button type="button" aria-label="Photographie 3"></button></div>
+    <div class="hero-dots" aria-label="Choisir une photographie">
+      <button class="is-active" type="button" aria-label="Photographie 1" aria-current="true"></button>
+      <button type="button" aria-label="Photographie 2"></button>
+      <button type="button" aria-label="Photographie 3"></button>
+      <button type="button" aria-label="Photographie 4"></button>
+      <button type="button" aria-label="Photographie 5"></button>
+    </div>
   </div>
 </article>
 <div class="hero-copy"><div class="eyebrow">Le média du scoutisme africain</div><h1>Le scoutisme africain <span>en mouvement.</span></h1><p>Suivez les actualités, les initiatives, les rencontres et les visages qui font vivre le scoutisme en Afrique et dans le monde.</p><div class="actions"><a class="btn primary" href="#actualites">Découvrir les actualités</a><a class="btn ghost" href="#magazine">Lire le magazine</a></div></div>
@@ -159,7 +167,7 @@ document.getElementById('contactForm').addEventListener('submit',e=>{e.preventDe
  if(!carousel)return;
  const slides=[...carousel.querySelectorAll('.hero-slide')];
  const dots=[...carousel.querySelectorAll('.hero-dots button')];
- if(slides.length!==3)return;
+ if(slides.length!==5)return;
  let current=0,timer=null;
  const show=(next)=>{
    if(next===current)return;
