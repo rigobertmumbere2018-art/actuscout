@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
-"""Prepare an auditable Blogger Atom import package from a Google Takeout ZIP.
-
-This tool does NOT write to Cloudflare. It extracts posts to JSON and a report so
-the owner can review the exact import set before any database mutation.
+"""Prepare Blogger article JSON and an audit report from a Google Takeout ZIP.
+This utility does not write to Cloudflare.
 Usage: python scripts/prepare_blogger_import.py <takeout.zip> [output-dir]
 """
 from __future__ import annotations
-import csv, html, json, re, sys, zipfile
+import html, json, re, sys, zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -38,29 +36,32 @@ def main():
             body = content.text or "" if content is not None else ""
             author_node = entry.find(ATOM + "author")
             author = text(author_node, "name") if author_node is not None else ""
-            categories = []
+            labels = []
             for cat in entry.findall(ATOM + "category"):
                 term = (cat.attrib.get("term") or "").strip()
                 if term and cat.attrib.get("scheme", "").startswith(BLOGGER):
-                    categories.append(term)
-            links = []
-            for link in entry.findall(ATOM + "link"):
-                href = link.attrib.get("href")
-                if href:
-                    links.append({"rel": link.attrib.get("rel", ""), "href": href})
-            images = re.findall(r"<img\\b[^>]*?src=['\"]([^'\"]+)['\"]", body, flags=re.I)
+                    labels.append(term)
+            links = [{"rel": link.attrib.get("rel", ""), "href": link.attrib["href"]}
+                     for link in entry.findall(ATOM + "link") if link.attrib.get("href")]
+            images = re.findall(r"<img\b[^>]*?src=['\"]([^'\"]+)['\"]", body, flags=re.I)
+            published = text(entry, "published")
+            updated = text(entry, "updated")
+            plain = html.unescape(re.sub(r"<[^>]+>", " ", body))
+            excerpt = re.sub(r"\s+", " ", plain).strip()[:1000]
             posts.append({
                 "blogger_post_id": entry_id,
                 "title": title,
                 "author": author,
-                "published_at": text(entry, "published"),
-                "updated_at": text(entry, "updated"),
-                "labels": list(dict.fromkeys(categories)),
+                "published_at": published,
+                "updated_at": updated,
+                "labels": list(dict.fromkeys(labels)),
                 "links": links,
                 "image_urls": list(dict.fromkeys(images)),
                 "body_html": body,
+                "excerpt": excerpt,
                 "has_title": bool(title),
-                "has_body": bool(body.strip()),\n                "status": "draft" if not title else "published",
+                "has_body": bool(body.strip()),
+                "status": "draft" if not title else "published",
             })
         (out / "blogger-articles-review.json").write_text(
             json.dumps(posts, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -68,17 +69,21 @@ def main():
             "source_archive": archive.name,
             "atom_entries": len(root.findall(ATOM + "entry")),
             "post_entries": len(posts),
+            "publish_immediately": sum(1 for p in posts if p["has_title"]),
+            "save_as_draft": sum(1 for p in posts if not p["has_title"]),
             "untitled_posts": [p["blogger_post_id"] for p in posts if not p["has_title"]],
             "empty_posts": [p["blogger_post_id"] for p in posts if not p["has_body"]],
-            "image_references": sum(len(p["image_urls"]) for p in posts),\n            "publish_immediately": sum(1 for p in posts if p["has_title"]),\n            "save_as_draft": sum(1 for p in posts if not p["has_title"]),
+            "image_references": sum(len(p["image_urls"]) for p in posts),
             "posts": [{
                 "id": p["blogger_post_id"], "title": p["title"],
                 "published_at": p["published_at"], "author": p["author"],
-                "labels": p["labels"], "image_count": len(p["image_urls"])
+                "labels": p["labels"], "image_count": len(p["image_urls"]),
+                "status": p["status"]
             } for p in posts]
         }
         (out / "blogger-import-report.json").write_text(
             json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
         print(json.dumps(summary, ensure_ascii=False, indent=2))
+
 if __name__ == "__main__":
     main()
