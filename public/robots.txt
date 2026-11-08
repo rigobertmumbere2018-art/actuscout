@@ -7,4 +7,61 @@ Disallow: /api/
 Disallow: /blogueur
 Disallow: /blogueur/
 
+# Search crawlers: public pages are crawlable; private paths remain excluded.
+User-agent: Googlebot
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /admin-blogueurs
+Disallow: /api/
+Disallow: /blogueur
+Disallow: /blogueur/
+
+User-agent: Bingbot
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /admin-blogueurs
+Disallow: /api/
+Disallow: /blogueur
+Disallow: /blogueur/
+
+# Search-oriented assistant crawlers are allowed to discover public pages.
+User-agent: OAI-SearchBot
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /admin-blogueurs
+Disallow: /api/
+Disallow: /blogueur
+Disallow: /blogueur/
+
+User-agent: PerplexityBot
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /admin-blogueurs
+Disallow: /api/
+Disallow: /blogueur
+Disallow: /blogueur/
+
+User-agent: Claude-SearchBot
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /admin-blogueurs
+Disallow: /api/
+Disallow: /blogueur
+Disallow: /blogueur/
+
+# Training-oriented crawlers are not granted access by this site policy.
+User-agent: GPTBot
+Disallow: /
+
+User-agent: ClaudeBot
+Disallow: /
+
+User-agent: Google-Extended
+Disallow: /
+
 Sitemap: https://actuscout.com/sitemap.xml
