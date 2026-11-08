@@ -35,3 +35,7 @@ Le thème Blogger, les pages statiques et les commentaires ne sont pas repris. L
 - Une migration SQL additive prépare les champs de traçabilité Blogger dans la table `articles`.
 - Un script Python prépare un inventaire JSON depuis le ZIP sans écrire dans Cloudflare.
 - Aucune donnée n'a été écrite dans la base D1 distante, aucun média n'a été envoyé dans R2 et aucun déploiement n'a été effectué.
+
+
+## Outil d'import ajouté à la branche de migration
+La branche contient désormais une route Worker protégée par la session administrateur, un contrôle d'import dans l'administration et un rendu HTML filtré dans la fenêtre de lecture des articles. L'import n'a pas encore été lancé : la migration D1 0004 et le contrôle de configuration R2 doivent précéder l'exécution.
