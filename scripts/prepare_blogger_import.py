@@ -48,7 +48,7 @@ def main():
                 href = link.attrib.get("href")
                 if href:
                     links.append({"rel": link.attrib.get("rel", ""), "href": href})
-            images = re.findall(r"<img\\b[^>]*?src=['\\"]([^'\\"]+)['\\"]", body, flags=re.I)
+            images = re.findall(r"<img\\b[^>]*?src=['\"]([^'\"]+)['\"]", body, flags=re.I)
             posts.append({
                 "blogger_post_id": entry_id,
                 "title": title,
@@ -60,7 +60,7 @@ def main():
                 "image_urls": list(dict.fromkeys(images)),
                 "body_html": body,
                 "has_title": bool(title),
-                "has_body": bool(body.strip()),
+                "has_body": bool(body.strip()),\n                "status": "draft" if not title else "published",
             })
         (out / "blogger-articles-review.json").write_text(
             json.dumps(posts, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -70,7 +70,7 @@ def main():
             "post_entries": len(posts),
             "untitled_posts": [p["blogger_post_id"] for p in posts if not p["has_title"]],
             "empty_posts": [p["blogger_post_id"] for p in posts if not p["has_body"]],
-            "image_references": sum(len(p["image_urls"]) for p in posts),
+            "image_references": sum(len(p["image_urls"]) for p in posts),\n            "publish_immediately": sum(1 for p in posts if p["has_title"]),\n            "save_as_draft": sum(1 for p in posts if not p["has_title"]),
             "posts": [{
                 "id": p["blogger_post_id"], "title": p["title"],
                 "published_at": p["published_at"], "author": p["author"],
