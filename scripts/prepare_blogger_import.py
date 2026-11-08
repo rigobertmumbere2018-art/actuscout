@@ -48,7 +48,7 @@ def main():
                 href = link.attrib.get("href")
                 if href:
                     links.append({"rel": link.attrib.get("rel", ""), "href": href})
-            images = re.findall(r'<img\\b[^>]*?src=["\\']([^"\\']+)["\\']', body, flags=re.I)
+            images = re.findall(r"<img\\b[^>]*?src=['\\"]([^'\\"]+)['\\"]", body, flags=re.I)
             posts.append({
                 "blogger_post_id": entry_id,
                 "title": title,
