@@ -82,6 +82,50 @@ if(bloggerStatus&&m==='POST'){if(!await authorized(req,env))return json({error:'
 const appDecision=p.match(/^\/api\/admin\/blogger-applications\/([^/]+)\/decision$/);
 if(appDecision&&m==='POST'){if(!await authorized(req,env))return json({error:'Authentification requise.'},401);const b=await req.json().catch(()=>({})),status=b.status;if(!['accepted','rejected'].includes(status))return json({error:'Décision invalide.'},400);const a=await env.DB.prepare('SELECT * FROM blogger_applications WHERE id=?').bind(appDecision[1]).first();if(!a)return json({error:'Candidature introuvable.'},404);if(a.status!=='pending')return json({error:'Cette candidature a déjà été traitée.'},409);if(status==='accepted'&&!env.SESSION_SECRET)return json({error:'Configuration de sécurité manquante : impossible de créer le compte.'},503);if(status==='accepted'){const temp=crypto.randomUUID().replace(/-/g,'')+'Aa1!';const hash=await mac(env.SESSION_SECRET,temp);const results=await env.DB.batch([env.DB.prepare("INSERT INTO bloggers(id,name,email,phone,password_hash,status,application_id) SELECT ?,?,?,?,?,'active',? WHERE EXISTS(SELECT 1 FROM blogger_applications WHERE id=? AND status='pending') AND NOT EXISTS(SELECT 1 FROM bloggers WHERE email=? COLLATE NOCASE)").bind(crypto.randomUUID(),a.name,a.email,a.phone,hash,a.id,a.id,a.email),env.DB.prepare("UPDATE blogger_applications SET status='accepted',reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending' AND EXISTS(SELECT 1 FROM bloggers WHERE application_id=? AND email=?)").bind(a.id,a.id,a.email)]);if(!results[0]?.meta?.changes){const existing=await env.DB.prepare('SELECT id FROM bloggers WHERE email=?').bind(a.email).first();if(existing)return json({error:'Cette adresse e-mail est déjà associée à un compte blogueur. Aucun mot de passe n’a été modifié.'},409);return json({error:'Cette candidature vient d’être traitée par une autre session. Actualise la liste.'},409)}if(!results[1]?.meta?.changes)return json({error:'La création du compte n’a pas pu être confirmée. Réessaie après actualisation.'},409);let emailSent=false;try{emailSent=await sendActuScoutMail(env,a.email,'Votre candidature ActuScout est acceptée','<p>Bonjour '+escapeHtml(a.name)+',</p><p>Votre candidature a été acceptée.</p><p>Accès à l’espace blogueur : <a href="https://actuscout.rigobertmumbere2018.workers.dev/blogueur">ouvrir votre espace</a>.</p><p>Mot de passe temporaire : <b>'+escapeHtml(temp)+'</b></p><p>Connectez-vous puis modifiez immédiatement ce mot de passe depuis la rubrique Sécurité du compte.</p>')}catch{}if(emailSent)return json({ok:true,emailSent:true,message:'Compte créé. Les identifiants ont été envoyés à l’adresse e-mail du candidat. Il devra modifier son mot de passe dès sa première connexion.'});return json({ok:true,emailSent:false,temporaryPassword:temp,message:'Compte créé, mais l’e-mail n’a pas pu être envoyé. Transmets le mot de passe temporaire au candidat par un canal privé. Il devra le modifier dès sa première connexion.'})}const decision=await env.DB.prepare("UPDATE blogger_applications SET status='rejected',reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(a.id).run();if(!decision.meta?.changes)return json({error:'Cette candidature vient d’être traitée par une autre session. Actualise la liste.'},409);return json({ok:true})}
 
+
+if(p==='/api/admin/import-blogger'&&m==='POST'){
+ if(!await authorized(req,env))return json({error:'Authentification administrateur requise.'},401);
+ const payload=await req.json().catch(()=>null);
+ if(!Array.isArray(payload)||payload.length>500)return json({error:'Fichier JSON invalide ou trop volumineux.'},400);
+ let imported=0,skipped=0,drafts=0,published=0,imagesCopied=0,imagesKept=0,errors=[];
+ for(const item of payload){
+  const sourceId=clean(item.blogger_post_id,300),title=clean(item.title,220),body=typeof item.body==='string'?item.body.slice(0,100000):'';
+  if(!sourceId||!body){skipped++;errors.push({id:sourceId||null,error:'Identifiant Blogger ou contenu manquant.'});continue}
+  const exists=await env.DB.prepare('SELECT id FROM articles WHERE blogger_post_id=?').bind(sourceId).first();
+  if(exists){skipped++;continue}
+  const status=title?'published':'draft';
+  let html=body,cover=clean(item.cover_url,2000),urls=Array.isArray(item.image_urls)?item.image_urls:[];
+  const unique=[...new Set(urls.filter(x=>typeof x==='string'&&/^https:\/\//i.test(x)))];
+  for(let i=0;i<unique.length;i++){
+   const original=unique[i];
+   if(env.GALLERY&&env.R2_PUBLIC_BASE){
+    try{
+     const response=await fetch(original,{redirect:'follow'});
+     if(!response.ok)throw new Error('HTTP '+response.status);
+     const type=(response.headers.get('content-type')||'image/jpeg').split(';')[0];
+     if(!type.startsWith('image/'))throw new Error('Type média non image');
+     const ext=(type.split('/')[1]||'jpg').replace('jpeg','jpg').replace(/[^a-z0-9]/gi,'').slice(0,8)||'jpg';
+     const key='blogger/'+encodeURIComponent(sourceId.slice(-48))+'/'+i+'-'+crypto.randomUUID()+'.'+ext;
+     await env.GALLERY.put(key,response.body,{httpMetadata:{contentType:type}});
+     const replacement=env.R2_PUBLIC_BASE.replace(/\/$/,'')+'/'+key;
+     html=html.split(original).join(replacement);
+     if(cover===original)cover=replacement;
+     imagesCopied++;
+    }catch(e){imagesKept++}
+   }else imagesKept++;
+  }
+  html=html.replace(/<\s*(script|iframe|object|embed|form|style)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi,'')
+    .replace(/\s+on[a-z]+\s*=\s*(['"][\s\S]*?\1|[^\s>]+)/gi,'')
+    .replace(/\s+(href|src)\s*=\s*(['"])\s*javascript:[\s\S]*?\2/gi,'');
+  try{
+   await env.DB.prepare('INSERT INTO articles(id,title,category,excerpt,body,cover_url,author,status,created_at,updated_at,blogger_post_id,source_permalink,original_published_at,original_updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .bind(crypto.randomUUID(),title,clean(item.category,100),clean(item.excerpt,1000),html,cover,clean(item.author,120)||'ActuScout',status,clean(item.original_published_at,40)||new Date().toISOString(),clean(item.original_updated_at,40)||new Date().toISOString(),sourceId,clean(item.source_permalink,2000),clean(item.original_published_at,40),clean(item.original_updated_at,40)).run();
+   imported++;if(status==='published')published++;else drafts++;
+  }catch(e){errors.push({id:sourceId,error:'Insertion impossible. Vérifier la migration D1 0004.'});}
+ }
+ return json({ok:errors.length===0,imported,skipped,published,drafts,imagesCopied,imagesKept,errors},errors.length?207:200);
+}
+
 if(p==='/api/health')return json({ok:true});
 if(p==='/api/login'&&m==='POST'){const b=await req.json().catch(()=>({}));if(!env.ADMIN_USERNAME||!env.ADMIN_PASSWORD||!env.SESSION_SECRET)return json({error:'Secrets administrateur non configurés.'},503);if(b.username!==env.ADMIN_USERNAME||b.password!==env.ADMIN_PASSWORD)return json({error:'Identifiants incorrects.'},401);return json({ok:true},200,{'set-cookie':COOKIE+'='+await makeSession(env,env.ADMIN_USERNAME)+'; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=28800'})}
 if(p==='/api/logout'&&m==='POST')return json({ok:true},200,{'set-cookie':COOKIE+'=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0'});
