@@ -2,20 +2,36 @@
 
 Archive reçue : `takeout-20261108T110138Z-1-001.zip`
 
-## Constat vérifié
-- Le ZIP contient `Takeout/Blogger/Blogs/Actuscout/feed.atom`.
-- Le flux Atom contient 9 entrées, dont 8 avec titre et 1 sans titre.
-- Le flux contient 9 entrées de type publication Blogger (identifiants `.post-`).
-- La période visible dans les dates des entrées va de septembre 2025 à avril 2026.
-- Le flux contient des corps HTML, des auteurs et quelques libellés.
-- L'archive contient aussi des fichiers image et des fichiers JSON de métadonnées d'albums.
-- Les pages statiques, commentaires et abonnés ne sont pas dans le périmètre de migration.
+## Résultat de l'analyse réelle du flux
+- Fichier analysé : `Takeout/Blogger/Blogs/Actuscout/feed.atom`.
+- 9 entrées avec identifiant de publication Blogger (`.post-`).
+- 8 publications avec titre et 1 publication sans titre.
+- 9 corps HTML présents, dont un contenu très court de 217 caractères.
+- 17 références d'images intégrées détectées dans les corps HTML.
+- Dates de publication observées : du 13 septembre 2025 au 12 avril 2026.
+- Auteurs présents dans le flux : ActuScout et Épinoche Dgtr.
+- Le ZIP contient également des médias d'album, les paramètres du blog et des métadonnées Takeout.
 
-## Limite
-Ce décompte décrit uniquement le flux Atom de cette archive Takeout. Il ne prouve pas que le flux contient toutes les publications historiques du blog. Il faut comparer avec l'inventaire du blog source avant de déclarer la migration exhaustive.
+## Inventaire des publications
+| Date | Publication |
+|---|---|
+| 2025-09-13 | Une nouvelle figure à la tête de l’ASNK |
+| 2025-09-14 | KATEMBO KAHAMWITHI Godefroid, nouveau Commissaire de District de Beni Ville |
+| 2025-09-15 | Les Scouts et Guides de France font leur rentrée à Châteauroux le 21 septembre |
+| 2025-09-16 | Parcours scout de M. Bakunda Hodari Didi : de Don Bosco Goma à la formation des formateurs |
+| 2025-09-24 | Un nouveau souffle pour le scoutisme à Goma |
+| 2025-12-28 | Hommage au Chef ALBATROS CONTENTIEUX |
+| 2026-04-11 | Groupe scout Saint Pierre Brave : Un camp mémorable à Bulongo |
+| 2026-04-11 | Publication sans titre — auteur : Épinoche Dgtr |
+| 2026-04-12 | Nyiragongo Dynamique : Christian MUKAMBILWA dit Crave, héritier d’une grande tradition scoute |
 
-## Design
-Le thème Blogger n'est pas repris. Les articles seront intégrés aux composants et au style déjà présents sur ActuScout.
+## Limite importante
+Ce décompte décrit le contenu du flux Atom présent dans le ZIP. Il ne prouve pas que ce flux contient toutes les publications historiques du blog. Il faut le comparer à la liste des articles visible sur le blog source avant de déclarer la migration exhaustive.
 
-## Prochaine étape technique
-Le script `scripts/prepare_blogger_import.py` prépare un JSON d'audit depuis le ZIP sans écrire dans D1. Les écritures de production restent bloquées jusqu'à validation du contenu et des médias.
+## Design et périmètre
+Le thème Blogger, les pages statiques et les commentaires ne sont pas repris. Les articles sont destinés à être affichés dans les composants et le style déjà présents sur ActuScout. Aucune refonte visuelle n'est prévue.
+
+## État technique
+- Une migration SQL additive prépare les champs de traçabilité Blogger dans la table `articles`.
+- Un script Python prépare un inventaire JSON depuis le ZIP sans écrire dans Cloudflare.
+- Aucune donnée n'a été écrite dans la base D1 distante, aucun média n'a été envoyé dans R2 et aucun déploiement n'a été effectué.
