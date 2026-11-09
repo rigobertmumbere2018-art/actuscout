@@ -73,7 +73,7 @@ function safeContent(target,source){
  };
  const fragment=document.createDocumentFragment();parsed.body.childNodes.forEach(node=>fragment.appendChild(cleanNode(node)));target.replaceChildren(fragment);
 }
-function dateLabel(value){if(!value)return '';const d=new Date(value);return Number.isNaN(d.getTime())?String(value):new Intl.DateTimeFormat('fr-FR',{dateStyle:'long'}).format(d)}
+function dateLabel(value){if(!value)return '';const raw=String(value).trim();const normalized=/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw)?raw.replace(' ','T')+'Z':raw;const d=new Date(normalized);return Number.isNaN(d.getTime())?raw:new Intl.DateTimeFormat('fr-FR',{dateStyle:'long',timeZone:'UTC'}).format(d)}
 function openArticle(id){location.href='/article?id='+encodeURIComponent(id)}
 function renderRelated(current,all){
  const related=all.filter(a=>a.id!==current.id).sort((a,b)=>{
