@@ -91,6 +91,9 @@ footer{background:#211238;padding:42px 0 20px}.footcol a.social-link{display:fle
 <div class="modal" id="infoModal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal-inner"><button class="close" id="closeModal" aria-label="Fermer">×</button><h3 id="modalTitle">Information</h3><div id="modalText"></div></div></div>
 <script>
 
+function replaceChildrenCompat(target,...nodes){if(typeof target.replaceChildren==='function'){target.replaceChildren(...nodes);return}while(target.firstChild)target.removeChild(target.firstChild);nodes.forEach(node=>target.appendChild(node))}
+let lastInfoModalTrigger=null;
+function closeInfoModal(){const modal=document.getElementById('infoModal');if(!modal)return;modal.classList.remove('open');if(lastInfoModalTrigger&&typeof lastInfoModalTrigger.focus==='function')lastInfoModalTrigger.focus();lastInfoModalTrigger=null}
 function renderArticleBody(target,source){
  const parsed=new DOMParser().parseFromString(String(source||''),'text/html');
  const allowed=new Set(['P','BR','DIV','SPAN','STRONG','B','EM','I','U','UL','OL','LI','H2','H3','H4','BLOCKQUOTE','A','IMG','HR']);
@@ -104,7 +107,7 @@ function renderArticleBody(target,source){
   node.childNodes.forEach(child=>el.appendChild(cleanNode(child)));
   return el;
  };
- const fragment=document.createDocumentFragment();parsed.body.childNodes.forEach(node=>fragment.appendChild(cleanNode(node)));target.replaceChildren(fragment);
+ const fragment=document.createDocumentFragment();parsed.body.childNodes.forEach(node=>fragment.appendChild(cleanNode(node)));replaceChildrenCompat(target,fragment);
 }
 
 const menuBtn=document.getElementById('menuBtn'),nav=document.getElementById('navLinks');
@@ -114,6 +117,8 @@ nav.querySelectorAll('a').forEach(a=>a.addEventListener('click',()=>setMenuOpen(
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&nav.classList.contains('show')){setMenuOpen(false);menuBtn.focus()}});
 document.addEventListener('click',e=>{if(nav.classList.contains('show')&&!nav.contains(e.target)&&!menuBtn.contains(e.target))setMenuOpen(false)});
 window.addEventListener('resize',()=>{if(window.innerWidth>680)setMenuOpen(false)});
+const infoModal=document.getElementById('infoModal'),closeInfoButton=document.getElementById('closeModal');
+if(infoModal&&closeInfoButton){closeInfoButton.addEventListener('click',closeInfoModal);infoModal.addEventListener('click',e=>{if(e.target===infoModal)closeInfoModal()});document.addEventListener('keydown',e=>{if(e.key==='Escape'&&infoModal.classList.contains('open'))closeInfoModal()})}
 document.getElementById('year').textContent=new Date().getFullYear();
 document.getElementById('contactForm').addEventListener('submit',e=>{e.preventDefault();const n=document.getElementById('nom').value,eMail=document.getElementById('email').value,s=document.getElementById('sujet').value,m=document.getElementById('message').value;const subject=encodeURIComponent('[ActuScout] '+s);const body=encodeURIComponent('Nom : '+n+'\nE-mail : '+eMail+'\nSujet : '+s+'\n\n'+m);location.href='mailto:actuscout@gmail.com?subject='+subject+'&body='+body;});
 </script>
@@ -138,7 +143,7 @@ document.getElementById('contactForm').addEventListener('submit',e=>{e.preventDe
   const [albumResult,articleResult]=await Promise.allSettled([fetch('/api/public/albums',{headers:{accept:'application/json'},cache:'no-store'}),fetch('/api/public/articles',{headers:{accept:'application/json'},cache:'no-store'})]);
   if(grid){
    if(albumResult.status!=='fulfilled'||!albumResult.value.ok)throw new Error('Albums indisponibles');
-   const albums=await albumResult.value.json();if(!Array.isArray(albums))throw new Error('Réponse albums invalide');grid.replaceChildren();
+   const albums=await albumResult.value.json();if(!Array.isArray(albums))throw new Error('Réponse albums invalide');replaceChildrenCompat(grid);
    if(!albums.length){grid.innerHTML='<p class="album-empty">Aucun album publié pour le moment.</p>';if(prev)prev.hidden=true;if(next)next.hidden=true}
    else{
     for(const album of albums){
@@ -158,7 +163,7 @@ document.getElementById('contactForm').addEventListener('submit',e=>{e.preventDe
     if(viewport&&prev&&next){prev.hidden=false;next.hidden=false;prev.onclick=()=>scrollStep(-1);next.onclick=()=>scrollStep(1);viewport.addEventListener('scroll',updateArrows,{passive:true});viewport.addEventListener('mouseenter',stopAuto);viewport.addEventListener('mouseleave',startAuto);viewport.addEventListener('focusin',stopAuto);viewport.addEventListener('focusout',startAuto);window.addEventListener('resize',updateArrows);updateArrows();startAuto()}
    }
   }
-  if(articleResult.status==='fulfilled'&&articleResult.value.ok){const articles=await articleResult.value.json(),newsGrid=document.querySelector('#actualites .news-grid');if(newsGrid&&Array.isArray(articles)&&articles.length){newsGrid.replaceChildren();for(const article of articles){const card=document.createElement('article');card.className='news-card';const photo=document.createElement('div');photo.className='photo';if(article.cover_url)photo.style.backgroundImage='url("'+String(article.cover_url).replace(/["\\]/g,'')+'")';else photo.style.background='linear-gradient(135deg,#35145b,#76549b)';const body=document.createElement('div');body.className='body';const kicker=document.createElement('div');kicker.className='kicker';kicker.textContent=article.category||'Actualité';const heading=document.createElement('h3');heading.textContent=article.title||'';const excerpt=document.createElement('p');excerpt.textContent=article.excerpt||String(article.body||'').slice(0,180);const meta=document.createElement('div');meta.className='meta';const author=document.createElement('span');author.textContent=article.author||'Rédaction ActuScout';meta.appendChild(author);body.append(kicker,heading,excerpt,meta);card.append(photo,body);card.tabIndex=0;card.setAttribute('role','button');card.setAttribute('aria-label','Lire '+(article.title||'article'));const open=()=>{const modal=document.querySelector('#infoModal');if(!modal)return;document.querySelector('#modalTitle').textContent=article.title||'Article';renderArticleBody(document.querySelector('#modalText'),article.body||article.excerpt||'');modal.classList.add('open')};card.addEventListener('click',open);card.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();open()}});newsGrid.appendChild(card)}}}
+  if(articleResult.status==='fulfilled'&&articleResult.value.ok){const articles=await articleResult.value.json(),newsGrid=document.querySelector('#actualites .news-grid');if(newsGrid&&Array.isArray(articles)&&articles.length){newsGrid.replaceChildren();for(const article of articles){const card=document.createElement('article');card.className='news-card';const photo=document.createElement('div');photo.className='photo';if(article.cover_url)photo.style.backgroundImage='url("'+String(article.cover_url).replace(/["\\]/g,'')+'")';else photo.style.background='linear-gradient(135deg,#35145b,#76549b)';const body=document.createElement('div');body.className='body';const kicker=document.createElement('div');kicker.className='kicker';kicker.textContent=article.category||'Actualité';const heading=document.createElement('h3');heading.textContent=article.title||'';const excerpt=document.createElement('p');excerpt.textContent=article.excerpt||String(article.body||'').slice(0,180);const meta=document.createElement('div');meta.className='meta';const author=document.createElement('span');author.textContent=article.author||'Rédaction ActuScout';meta.appendChild(author);body.append(kicker,heading,excerpt,meta);card.append(photo,body);card.tabIndex=0;card.setAttribute('role','button');card.setAttribute('aria-label','Lire '+(article.title||'article'));const open=()=>{const modal=document.querySelector('#infoModal'),title=document.querySelector('#modalTitle'),content=document.querySelector('#modalText'),close=document.querySelector('#closeModal');if(!modal||!title||!content)return;lastInfoModalTrigger=card;title.textContent=article.title||'Article';renderArticleBody(content,article.body||article.excerpt||'');modal.classList.add('open');if(close)close.focus()};card.addEventListener('click',open);card.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();open()}});newsGrid.appendChild(card)}}}
  }catch(error){if(grid){grid.innerHTML='<div class="album-empty" role="status" style="display:block;box-sizing:border-box;width:100%;min-width:100%;max-width:100%;padding:22px 18px;white-space:normal;overflow-wrap:anywhere">Les albums sont momentanément indisponibles. Réessayez dans quelques instants.</div>';if(prev)prev.hidden=true;if(next)next.hidden=true}console.error('ActuScout — chargement des albums :',error)}
  window.addEventListener('pagehide',stopAuto);
 })();
