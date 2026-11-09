@@ -10,8 +10,9 @@ CREATE TABLE IF NOT EXISTS article_metrics (
 CREATE TABLE IF NOT EXISTS article_reads (
   article_id TEXT NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
   reader_id TEXT NOT NULL,
+  read_date TEXT NOT NULL DEFAULT (date('now')),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (article_id, reader_id)
+  PRIMARY KEY (article_id, reader_id, read_date)
 );
 
 CREATE TABLE IF NOT EXISTS article_likes (
