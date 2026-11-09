@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#35145b">
+<title>Article | ActuScout</title>
+<meta name="description" content="Lire les actualités du scoutisme sur ActuScout.">
+<style>
+:root{--violet:#35145b;--violet2:#5c318a;--ink:#241631;--muted:#746b7c;--paper:#fff;--line:#e9e3ef;--soft:#f7f4fa}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:Arial,Helvetica,sans-serif;line-height:1.65}
+a{color:inherit}
+.topbar{height:66px;background:var(--violet);color:#fff;display:flex;align-items:center}
+.topbar-inner{width:min(1160px,calc(100% - 40px));margin:auto;display:flex;align-items:center;justify-content:space-between;gap:18px}
+.brand{color:#fff;text-decoration:none;font-weight:800;letter-spacing:.04em;font-size:19px}
+.back{display:inline-flex;align-items:center;gap:9px;color:#fff;text-decoration:none;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.35);padding:8px 13px;border-radius:4px}
+.back:hover{background:rgba(255,255,255,.12)}
+main{width:min(1060px,calc(100% - 40px));margin:0 auto;padding:34px 0 70px}
+.article-head{max-width:900px;margin:0 auto 25px}
+.eyebrow{color:var(--violet2);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;margin-bottom:12px}
+h1{font-size:clamp(30px,5vw,54px);line-height:1.12;letter-spacing:-.035em;margin:0 0 17px;color:var(--violet);font-weight:800}
+.meta{display:flex;flex-wrap:wrap;gap:8px 18px;color:var(--muted);font-size:14px}
+.cover-wrap{width:100%;height:clamp(260px,53vw,590px);background:#eee8f4;overflow:hidden;margin:28px 0 36px;border-radius:5px}
+.cover{width:100%;height:100%;display:block;object-fit:cover}
+.article-layout{max-width:820px;margin:0 auto}
+.article-content{font-size:18px;line-height:1.85;color:#30283a;overflow-wrap:anywhere}
+.article-content p{margin:0 0 1.35em}
+.article-content h2,.article-content h3,.article-content h4{color:var(--violet);line-height:1.25;margin:1.8em 0 .7em}
+.article-content h2{font-size:30px}.article-content h3{font-size:24px}.article-content h4{font-size:20px}
+.article-content img{display:block;max-width:100%;height:auto;margin:26px auto;border-radius:4px}
+.article-content a{color:var(--violet2);text-decoration:underline}
+.article-content blockquote{border-left:4px solid var(--violet2);margin:28px 0;padding:8px 20px;background:var(--soft);color:#51465d}
+.article-content ul,.article-content ol{padding-left:26px;margin:0 0 1.4em}
+.article-content hr{border:0;border-top:1px solid var(--line);margin:30px 0}
+.related{margin-top:70px;padding-top:32px;border-top:1px solid var(--line)}
+.related-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-bottom:22px}
+.related-kicker{color:var(--violet2);font-size:12px;text-transform:uppercase;letter-spacing:.12em;font-weight:800}
+.related h2{font-size:clamp(24px,3vw,32px);line-height:1.2;color:var(--violet);margin:5px 0 0}
+.related-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px}
+.related-card{display:block;text-decoration:none;border:1px solid var(--line);background:#fff;min-width:0;transition:transform .18s ease,box-shadow .18s ease}
+.related-card:hover{transform:translateY(-3px);box-shadow:0 12px 28px rgba(35,17,55,.1)}
+.related-card img,.related-placeholder{width:100%;height:185px;object-fit:cover;display:block;background:linear-gradient(135deg,#35145b,#76549b)}
+.related-copy{padding:16px}
+.related-category{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--violet2);font-weight:800}
+.related-card h3{font-size:18px;line-height:1.35;color:var(--ink);margin:7px 0 0}
+.state{max-width:760px;margin:70px auto;text-align:center;padding:35px 20px;background:var(--soft);color:var(--muted)}
+.state h1{font-size:30px}
+@media(max-width:700px){.topbar{height:60px}.topbar-inner{width:calc(100% - 28px)}main{width:calc(100% - 28px);padding:25px 0 48px}.cover-wrap{height:clamp(230px,70vw,390px);margin:22px 0 27px}.article-content{font-size:17px;line-height:1.78}.related{margin-top:48px}.related-grid{grid-template-columns:1fr;gap:14px}.related-card{display:grid;grid-template-columns:112px minmax(0,1fr)}.related-card img,.related-placeholder{height:100%;min-height:118px}.related-copy{padding:12px}.related-card h3{font-size:16px}.related-head{display:block}}
+@media(prefers-reduced-motion:reduce){.related-card{transition:none}}
+</style>
+</head>
+<body>
+<header class="topbar"><div class="topbar-inner"><a class="brand" href="/">ACTUSCOUT</a><a class="back" id="backLink" href="/">← Retour aux actualités</a></div></header>
+<main id="main"><div class="state" role="status">Chargement de l’article…</div></main>
+<script>
+const main=document.getElementById('main');
+const params=new URLSearchParams(location.search);
+const articleId=params.get('id');
+document.getElementById('backLink').addEventListener('click',function(event){if(history.length>1&&document.referrer&&new URL(document.referrer).origin===location.origin){event.preventDefault();history.back()}});
+function safeContent(target,source){
+ const parsed=new DOMParser().parseFromString(String(source||''),'text/html');
+ const allowed=new Set(['P','BR','DIV','SPAN','STRONG','B','EM','I','U','UL','OL','LI','H2','H3','H4','BLOCKQUOTE','A','IMG','HR']);
+ const cleanNode=node=>{
+  if(node.nodeType===Node.TEXT_NODE)return document.createTextNode(node.textContent||'');
+  if(node.nodeType!==Node.ELEMENT_NODE)return document.createDocumentFragment();
+  if(!allowed.has(node.tagName)){const fragment=document.createDocumentFragment();node.childNodes.forEach(child=>fragment.appendChild(cleanNode(child)));return fragment}
+  const el=document.createElement(node.tagName.toLowerCase());
+  if(node.tagName==='A'){const href=node.getAttribute('href')||'';if(/^https?:\/\//i.test(href)){el.href=href;el.target='_blank';el.rel='noopener noreferrer'}}
+  if(node.tagName==='IMG'){const src=node.getAttribute('src')||'';if(!/^https?:\/\//i.test(src))return document.createDocumentFragment();el.src=src;el.alt=node.getAttribute('alt')||'';el.loading='lazy'}
+  node.childNodes.forEach(child=>el.appendChild(cleanNode(child)));
+  return el;
+ };
+ const fragment=document.createDocumentFragment();parsed.body.childNodes.forEach(node=>fragment.appendChild(cleanNode(node)));target.replaceChildren(fragment);
+}
+function dateLabel(value){if(!value)return '';const d=new Date(value);return Number.isNaN(d.getTime())?String(value):new Intl.DateTimeFormat('fr-FR',{dateStyle:'long'}).format(d)}
+function openArticle(id){location.href='/article?id='+encodeURIComponent(id)}
+function renderRelated(current,all){
+ const related=all.filter(a=>a.id!==current.id).sort((a,b)=>{
+  const ac=(a.category||'').toLocaleLowerCase()===(current.category||'').toLocaleLowerCase()?1:0;
+  const bc=(b.category||'').toLocaleLowerCase()===(current.category||'').toLocaleLowerCase()?1:0;
+  return bc-ac;
+ }).slice(0,3);
+ if(!related.length)return null;
+ const section=document.createElement('section');section.className='related';
+ const head=document.createElement('div');head.className='related-head';
+ const heading=document.createElement('div');const kicker=document.createElement('div');kicker.className='related-kicker';kicker.textContent='Pour prolonger la lecture';
+ const title=document.createElement('h2');title.textContent='À lire également';heading.append(kicker,title);head.append(heading);
+ const grid=document.createElement('div');grid.className='related-grid';
+ related.forEach(item=>{
+  const link=document.createElement('a');link.className='related-card';link.href='/article?id='+encodeURIComponent(item.id);
+  if(item.cover_url){const img=document.createElement('img');img.src=item.cover_url;img.alt=item.title||'Couverture';img.loading='lazy';img.onerror=()=>{img.replaceWith(Object.assign(document.createElement('div'),{className:'related-placeholder'}))};link.appendChild(img)}
+  else{const placeholder=document.createElement('div');placeholder.className='related-placeholder';link.appendChild(placeholder)}
+  const copy=document.createElement('div');copy.className='related-copy';const cat=document.createElement('div');cat.className='related-category';cat.textContent=item.category||'Actualité';const h=document.createElement('h3');h.textContent=item.title||'Article ActuScout';copy.append(cat,h);link.appendChild(copy);grid.appendChild(link);
+ });
+ section.append(head,grid);return section;
+}
+async function load(){
+ if(!articleId){main.innerHTML='<div class="state"><h1>Article introuvable</h1><p>Aucun identifiant d’article n’a été fourni.</p><a href="/">Retour aux actualités</a></div>';return}
+ try{
+  const response=await fetch('/api/public/articles',{headers:{accept:'application/json'},cache:'no-store'});
+  if(!response.ok)throw new Error('Impossible de charger les articles');
+  const all=await response.json();
+  if(!Array.isArray(all))throw new Error('Réponse invalide');
+  const article=all.find(item=>String(item.id)===articleId);
+  if(!article){main.innerHTML='<div class="state"><h1>Article introuvable</h1><p>Cet article n’est plus disponible ou son lien est incorrect.</p><a href="/">Retour aux actualités</a></div>';return}
+  document.title=(article.title||'Article')+' | ActuScout';
+  const description=document.querySelector('meta[name="description"]');if(description)description.content=article.excerpt||article.title||'Lire ActuScout';
+  main.replaceChildren();
+  const header=document.createElement('header');header.className='article-head';
+  const category=document.createElement('div');category.className='eyebrow';category.textContent=article.category||'Actualité';
+  const title=document.createElement('h1');title.textContent=article.title||'Article ActuScout';
+  const meta=document.createElement('div');meta.className='meta';
+  const author=document.createElement('span');author.textContent='Par '+(article.author||'Rédaction ActuScout');
+  const date=document.createElement('span');date.textContent=dateLabel(article.original_published_at||article.created_at);
+  meta.append(author);if(date.textContent)meta.append(date);header.append(category,title,meta);main.appendChild(header);
+  if(article.cover_url){const coverWrap=document.createElement('div');coverWrap.className='cover-wrap';const img=document.createElement('img');img.className='cover';img.src=article.cover_url;img.alt=article.title||'Couverture de l’article';img.fetchPriority='high';img.onerror=()=>coverWrap.remove();coverWrap.appendChild(img);main.appendChild(coverWrap)}
+  const layout=document.createElement('article');layout.className='article-layout';
+  const content=document.createElement('div');content.className='article-content';safeContent(content,article.body||article.excerpt||'');
+  layout.appendChild(content);main.appendChild(layout);
+  const related=renderRelated(article,all);if(related)main.appendChild(related);
+ }catch(error){console.error('ActuScout — lecture article:',error);main.innerHTML='<div class="state"><h1>Article momentanément indisponible</h1><p>Une erreur empêche le chargement de cet article. Réessayez dans quelques instants.</p><a href="/">Retour aux actualités</a></div>'}
+}
+load();
+</script>
+</body>
+</html>
