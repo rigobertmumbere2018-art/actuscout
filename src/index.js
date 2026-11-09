@@ -138,7 +138,10 @@ if(p==='/api/admin/import-blogger'&&m==='POST'){
 if(p==='/api/health')return json({ok:true});
 if(p==='/api/login'&&m==='POST'){const b=await req.json().catch(()=>({}));if(!env.ADMIN_USERNAME||!env.ADMIN_PASSWORD||!env.SESSION_SECRET)return json({error:'Secrets administrateur non configurés.'},503);if(b.username!==env.ADMIN_USERNAME||b.password!==env.ADMIN_PASSWORD)return json({error:'Identifiants incorrects.'},401);return json({ok:true},200,{'set-cookie':COOKIE+'='+await makeSession(env,env.ADMIN_USERNAME)+'; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=28800'})}
 if(p==='/api/logout'&&m==='POST')return json({ok:true},200,{'set-cookie':COOKIE+'=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0'});
-const interaction=p.match(/^\/api\/public\/articles\/([^/]+)\/(metrics|view|like|share)$/);
+if(!env.SESSION_SECRET)return json({error:'Statistiques indisponibles : configuration de sécurité manquante.'},503);
+ const ranking=u.pathname==='/api/public/rankings'&&m==='GET';
+ if(ranking){const by=['views','likes','shares'].includes(u.searchParams.get('by'))?u.searchParams.get('by'):'views',limit=Math.min(20,Math.max(1,Number(u.searchParams.get('limit'))||5));const rows=await env.DB.prepare('SELECT a.id,a.title,a.category,a.cover_url,a.author,a.created_at,COALESCE(m.views,0) AS views,COALESCE(m.likes,0) AS likes,COALESCE(m.shares,0) AS shares FROM articles a LEFT JOIN article_metrics m ON m.article_id=a.id WHERE a.status=\'published\' ORDER BY '+by+' DESC,a.created_at DESC LIMIT ?').bind(limit).all();return json(rows.results||[])}
+ const interaction=p.match(/^\/api\/public\/articles\/([^/]+)\/(metrics|view|like|share)$/);
  if(interaction){
   const articleId=decodeURIComponent(interaction[1]),action=interaction[2];
   if((action==='metrics'&&m!=='GET')||(action!=='metrics'&&m!=='POST'))return json({error:'Méthode non autorisée.'},405);
