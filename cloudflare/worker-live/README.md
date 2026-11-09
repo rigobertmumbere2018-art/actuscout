@@ -1,6 +1,9 @@
 # Snapshot du Worker ActuScout actif
 
 - Date de capture : 2026-11-09
+- Déploiement actif lors de la capture : `cef7f339-31ea-492d-b46a-7e54c8a807e5`
+- Version active à 100 % : `41b4761c-dcac-4dab-8ebf-263948e8f3a9`
+- Date de compatibilité : `2026-11-04`
 - Source de vérité : script réellement déployé sur Cloudflare Worker `actuscout`.
 - Fichier capturé : `index.js` (bundle compilé récupéré depuis l'API Cloudflare).
 - Ce snapshot est une sauvegarde fidèle du code actif, pas une reconstruction depuis `src/index.js`.
@@ -27,7 +30,7 @@ Le code actif utilise également les variables/secrets suivants selon les routes
 - `ACTUSCOUT_EMAIL_FROM`
 - `CONTACT_EMAIL_TO`
 
-Les valeurs secrètes ne doivent jamais être commitées. Vérifier leur présence dans les paramètres Cloudflare avant un déploiement.
+Les variables réellement référencées dans le bundle actif sont : `ACTUSCOUT_EMAIL_FROM`, `ADMIN_PASSWORD`, `ADMIN_USERNAME`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_TOKEN_ENCRYPTION_KEY`, `R2_PUBLIC_BASE`, `RESEND_API_KEY` et `SESSION_SECRET`. `DB`, `GALLERY` et `ASSETS` sont des bindings, pas des variables secrètes. `CONTACT_EMAIL_TO` n'est pas référencée dans le bundle actif capturé et ne doit donc pas être présentée comme une dépendance vérifiée. Les valeurs secrètes ne sont jamais exportées ni commitées. Vérifier leur présence dans les paramètres Cloudflare avant un déploiement.
 
 ## Procédure de déploiement sûre — non exécutée
 
