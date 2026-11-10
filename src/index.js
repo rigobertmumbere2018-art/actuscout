@@ -3,6 +3,15 @@ const json=(d,s=200,h={})=>new Response(JSON.stringify(d),{status:s,headers:{'co
 const clean=(v,n=100000)=>typeof v==='string'?v.trim().slice(0,n):'';
 const b64=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 async function mac(secret,v){const k=await crypto.subtle.importKey('raw',enc.encode(secret),{name:'HMAC',hash:'SHA-256'},false,['sign']);return b64(await crypto.subtle.sign('HMAC',k,enc.encode(v)))}
+async function readerIdentity(req,env){
+ const raw=(req.headers.get('Cookie')||'').split(';').map(x=>x.trim()).find(x=>x.startsWith('as_reader='));
+ if(raw){
+  const [id,sig]=raw.slice('as_reader='.length).split('.');
+  if(id&&sig&&sig===await mac(env.SESSION_SECRET||'',id))return {id,setCookie:null};
+ }
+ const id=crypto.randomUUID(),sig=await mac(env.SESSION_SECRET||'',id);
+ return {id,setCookie:'as_reader='+id+'.'+sig+'; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=31536000'};
+}
 async function makeSession(env,u){const p=b64(enc.encode(JSON.stringify({u,exp:Date.now()+28800000})));return p+'.'+await mac(env.SESSION_SECRET,p)}
 async function authorized(req,env){const c=(req.headers.get('Cookie')||'').split(';').map(x=>x.trim()).find(x=>x.startsWith(COOKIE+'='));if(!c||!env.SESSION_SECRET)return false;const [p,s]=c.slice(COOKIE.length+1).split('.');if(!p||!s||s!==await mac(env.SESSION_SECRET,p))return false;try{const v=JSON.parse(atob(p.replace(/-/g,'+').replace(/_/g,'/')));return !!v.u&&v.exp>Date.now()}catch{return false}}
 const config={albums:{fields:['title','description','event_date','source_url','cover_url','status'],required:['title'],limits:{title:180,description:5000,event_date:60,source_url:2000,cover_url:2000,status:20}},articles:{fields:['title','category','excerpt','body','cover_url','author','status'],required:['title','body'],limits:{title:220,category:100,excerpt:1000,body:100000,cover_url:2000,author:120,status:20}}};
@@ -129,7 +138,45 @@ if(p==='/api/admin/import-blogger'&&m==='POST'){
 if(p==='/api/health')return json({ok:true});
 if(p==='/api/login'&&m==='POST'){const b=await req.json().catch(()=>({}));if(!env.ADMIN_USERNAME||!env.ADMIN_PASSWORD||!env.SESSION_SECRET)return json({error:'Secrets administrateur non configurés.'},503);if(b.username!==env.ADMIN_USERNAME||b.password!==env.ADMIN_PASSWORD)return json({error:'Identifiants incorrects.'},401);return json({ok:true},200,{'set-cookie':COOKIE+'='+await makeSession(env,env.ADMIN_USERNAME)+'; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=28800'})}
 if(p==='/api/logout'&&m==='POST')return json({ok:true},200,{'set-cookie':COOKIE+'=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0'});
-if(p==='/api/public/albums'&&m==='GET'){const r=await env.DB.prepare("SELECT id,title,description,event_date,source_url,cover_url,status,created_at,updated_at FROM albums WHERE status='published' ORDER BY created_at DESC").all();const rows=r.results||[];await Promise.all(rows.map(async a=>{try{const ph=await env.DB.prepare('SELECT id,public_url,mime_type,created_at FROM album_photos WHERE album_id=? ORDER BY created_at ASC').bind(a.id).all();a.photos=ph.results||[]}catch(e){a.photos=[];a.photos_error=true}}));return json(rows)}
+const ranking=u.pathname==='/api/public/rankings'&&m==='GET';
+ if(ranking){const by=['views','likes','shares'].includes(u.searchParams.get('by'))?u.searchParams.get('by'):'views',limit=Math.min(20,Math.max(1,Number(u.searchParams.get('limit'))||5));const rows=await env.DB.prepare('SELECT a.id,a.title,a.category,a.cover_url,a.author,a.created_at,COALESCE(m.views,0) AS views,COALESCE(m.likes,0) AS likes,COALESCE(m.shares,0) AS shares FROM articles a LEFT JOIN article_metrics m ON m.article_id=a.id WHERE a.status=\'published\' ORDER BY '+by+' DESC,a.created_at DESC LIMIT ?').bind(limit).all();return json(rows.results||[])}
+ const interaction=p.match(/^\/api\/public\/articles\/([^/]+)\/(metrics|view|like|share)$/);
+ if(interaction){
+  if(!env.SESSION_SECRET)return json({error:'Statistiques indisponibles : configuration de sécurité manquante.'},503);
+  const articleId=decodeURIComponent(interaction[1]),action=interaction[2];
+  if((action==='metrics'&&m!=='GET')||(action!=='metrics'&&m!=='POST'))return json({error:'Méthode non autorisée.'},405);
+  if(action!=='metrics'){
+   const origin=req.headers.get('Origin');
+   if(!origin||origin!==u.origin)return json({error:'Origine de requête non autorisée.'},403);
+  }
+  const article=await env.DB.prepare("SELECT id FROM articles WHERE id=? AND status='published'").bind(articleId).first();
+  if(!article)return json({error:'Article introuvable.'},404);
+  const reader=await readerIdentity(req,env),headers=reader.setCookie?{'set-cookie':reader.setCookie}:{};
+  await env.DB.prepare('INSERT OR IGNORE INTO article_metrics(article_id) VALUES(?)').bind(articleId).run();
+  if(action==='view'){
+   const inserted=await env.DB.prepare("INSERT OR IGNORE INTO article_reads(article_id,reader_id,read_date) VALUES(?,?,date('now'))").bind(articleId,reader.id).run();
+   if(inserted.meta?.changes)await env.DB.prepare('UPDATE article_metrics SET views=views+1,updated_at=CURRENT_TIMESTAMP WHERE article_id=?').bind(articleId).run();
+  }
+  if(action==='like'){
+   const inserted=await env.DB.prepare('INSERT OR IGNORE INTO article_likes(article_id,reader_id) VALUES(?,?)').bind(articleId,reader.id).run();
+   if(inserted.meta?.changes)await env.DB.prepare('UPDATE article_metrics SET likes=likes+1,updated_at=CURRENT_TIMESTAMP WHERE article_id=?').bind(articleId).run();
+   else{
+    const removed=await env.DB.prepare('DELETE FROM article_likes WHERE article_id=? AND reader_id=?').bind(articleId,reader.id).run();
+    if(removed.meta?.changes)await env.DB.prepare('UPDATE article_metrics SET likes=MAX(0,likes-1),updated_at=CURRENT_TIMESTAMP WHERE article_id=?').bind(articleId).run();
+   }
+  }
+  if(action==='share'){
+   const eventId=crypto.randomUUID();
+   await env.DB.batch([
+    env.DB.prepare('INSERT INTO article_share_events(id,article_id,reader_id) VALUES(?,?,?)').bind(eventId,articleId,reader.id),
+    env.DB.prepare('UPDATE article_metrics SET shares=shares+1,updated_at=CURRENT_TIMESTAMP WHERE article_id=?').bind(articleId)
+   ]);
+  }
+  const stats=await env.DB.prepare('SELECT views,likes,shares FROM article_metrics WHERE article_id=?').bind(articleId).first();
+  const liked=!!await env.DB.prepare('SELECT 1 AS yes FROM article_likes WHERE article_id=? AND reader_id=?').bind(articleId,reader.id).first();
+  return json({...stats,liked},200,headers);
+ }
+ if(p==='/api/public/albums'&&m==='GET'){const r=await env.DB.prepare("SELECT id,title,description,event_date,source_url,cover_url,status,created_at,updated_at FROM albums WHERE status='published' ORDER BY created_at DESC").all();const rows=r.results||[];await Promise.all(rows.map(async a=>{try{const ph=await env.DB.prepare('SELECT id,public_url,mime_type,created_at FROM album_photos WHERE album_id=? ORDER BY created_at ASC').bind(a.id).all();a.photos=ph.results||[]}catch(e){a.photos=[];a.photos_error=true}}));return json(rows)}
 const pub=p.match(/^\/api\/public\/(albums|articles)$/);if(pub&&m==='GET'){const k=pub[1],r=await env.DB.prepare("SELECT * FROM "+k+" WHERE status='published' ORDER BY created_at DESC").all();return json(r.results||[])}
 if(!await authorized(req,env))return json({error:'Authentification requise.'},401);if(p==='/api/me')return json({authenticated:true});
 const match=p.match(/^\/api\/(albums|articles)(?:\/([^/]+))?$/);if(!match)return json({error:'Route introuvable.'},404);const kind=match[1],id=match[2],cfg=config[kind];
@@ -137,5 +184,5 @@ if(m==='GET'&&!id){const r=await env.DB.prepare('SELECT * FROM '+kind+' ORDER BY
 if(m==='GET'&&id){const r=await env.DB.prepare('SELECT * FROM '+kind+' WHERE id=?').bind(id).first();return r?json(r):json({error:'Introuvable.'},404)}
 if((m==='POST'&&!id)||(m==='PUT'&&id)){const b=await req.json().catch(()=>({}));for(const f of cfg.required)if(!clean(b[f],cfg.limits[f]))return json({error:'Champ obligatoire : '+f},400);const vals=cfg.fields.map(f=>f==='status'?(['draft','pending','published'].includes(b[f])?b[f]:'draft'):clean(b[f],cfg.limits[f]));if(m==='POST'){const newId=crypto.randomUUID(),cols=['id',...cfg.fields],marks=cols.map(()=>'?').join(',');await env.DB.prepare('INSERT INTO '+kind+'('+cols.join(',')+') VALUES('+marks+')').bind(newId,...vals).run();return json({ok:true,id:newId},201)}await env.DB.prepare('UPDATE '+kind+' SET '+cfg.fields.map(f=>f+'=?').join(',')+',updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(...vals,id).run();return json({ok:true})}
 if(m==='DELETE'&&id){await env.DB.prepare('DELETE FROM '+kind+' WHERE id=?').bind(id).run();return json({ok:true})}return json({error:'Méthode non autorisée.'},405)}
-const pageRoutes={'/':'/index.html','/albums':'/albums.html','/albums/':'/albums.html','/admin':'/admin.html','/admin/':'/admin.html','/admin-blogueurs':'/admin-blogueurs.html','/devenir-blogueur':'/devenir-blogueur.html','/faire-un-don':'/faire-un-don.html','/blogueur':'/blogueur.html','/blogueur/':'/blogueur.html','/qui-sommes-nous':'/qui-sommes-nous.html','/qui-sommes-nous/':'/qui-sommes-nous.html'};
+const pageRoutes={'/':'/index.html','/albums':'/albums.html','/albums/':'/albums.html','/admin':'/admin.html','/admin/':'/admin.html','/admin-blogueurs':'/admin-blogueurs.html','/devenir-blogueur':'/devenir-blogueur.html','/faire-un-don':'/faire-un-don.html','/blogueur':'/blogueur.html','/blogueur/':'/blogueur.html','/article':'/article.html','/article/':'/article.html','/qui-sommes-nous':'/qui-sommes-nous.html','/qui-sommes-nous/':'/qui-sommes-nous.html'};
 export default {async fetch(req,env){const u=new URL(req.url);try{if(u.pathname.startsWith('/api/'))return await api(req,env);const assetPath=pageRoutes[u.pathname];if(assetPath){const assetUrl=new URL(assetPath,u.origin);assetUrl.search=u.search;return env.ASSETS.fetch(new Request(assetUrl,req))}return env.ASSETS.fetch(req)}catch(e){return json({error:'Erreur serveur.'},500)}}};
