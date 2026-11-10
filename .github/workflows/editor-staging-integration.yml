@@ -1,0 +1,22 @@
+name: Editor staging integration
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/index.js"
+      - "public/editor/**"
+      - ".github/workflows/editor-staging-integration.yml"
+
+jobs:
+  staging-api:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run isolated Cloudflare staging integration tests
+        env:
+          TEST_URL: https://actuscout-editor-staging.rigobertmumbere2018.workers.dev/__test/run?key=stage-only-2026-11-10-test-token-72f4c91
+        run: |
+          set -euo pipefail
+          response="$(curl --silent --show-error --fail "$TEST_URL")"
+          echo "$response"
+          node -e 'const r=JSON.parse(process.argv[1]); if(r.environment!=="staging-only" || r.productionTouched!==false || r.failed!==0 || r.passed<6){console.error("Integration tests failed or staging safety check failed"); process.exit(1)}' "$response"
