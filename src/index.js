@@ -1,13 +1,63 @@
 const COOKIE='as_admin', enc=new TextEncoder();
 const json=(d,s=200,h={})=>new Response(JSON.stringify(d),{status:s,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store',...h}});
 const clean=(v,n=100000)=>typeof v==='string'?v.trim().slice(0,n):'';
-function sanitizeArticleHtml(value) {
-  let html = String(value || '').slice(0, 100000);
-  html = html.replace(/<\s*(script|iframe|object|embed|form|input|button|textarea|style|link|meta)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '');
-  html = html.replace(/<\s*(script|iframe|object|embed|form|input|button|textarea|style|link|meta)\b[^>]*\/?\s*>/gi, '');
-  html = html.replace(/\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
-  html = html.replace(/\s+(href|src)\s*=\s*(["'])\s*(javascript|vbscript|data:text\/html):[\s\S]*?\2/gi, ' $1="#"');
-  return html;
+const ARTICLE_HTML_TAGS = new Set([
+  'p','br','strong','b','em','i','u','s','del','blockquote',
+  'h1','h2','h3','h4','h5','h6','ul','ol','li',
+  'a','img','figure','figcaption','hr','pre','code',
+  'table','thead','tbody','tr','th','td','sup','sub','span','div'
+]);
+const ARTICLE_DROP_CONTENT_TAGS = new Set([
+  'script','style','iframe','object','embed','form','input','button',
+  'textarea','select','option','svg','math','template','noscript'
+]);
+function safeArticleUrl(value, kind) {
+  const v = String(value || '').trim();
+  if (!v || /[\\u0000-\\u0020]/.test(v)) return '';
+  if (kind === 'href' && /^mailto:[^\\s]+$/i.test(v)) return v;
+  if (/^https?:\\/\\//i.test(v)) return v;
+  if (v.startsWith('/') && !v.startsWith('//') && !v.includes('\\\\')) return v;
+  if (v.startsWith('#') && kind === 'href') return v;
+  return '';
+}
+async function sanitizeArticleHtml(value) {
+  const html = String(value || '').slice(0, 100000);
+  const response = new HTMLRewriter().on('*', {
+    element(element) {
+      const tag = element.tagName.toLowerCase();
+      if (ARTICLE_DROP_CONTENT_TAGS.has(tag)) {
+        element.remove();
+        return;
+      }
+      if (!ARTICLE_HTML_TAGS.has(tag)) {
+        element.removeAndKeepContent();
+        return;
+      }
+      const attrs = [...element.attributes];
+      for (const attr of attrs) element.removeAttribute(attr.name);
+      for (const attr of attrs) {
+        const name = attr.name.toLowerCase();
+        const value = attr.value;
+        if (name === 'href' && tag === 'a') {
+          const url = safeArticleUrl(value, 'href');
+          if (url) element.setAttribute('href', url);
+        } else if (name === 'src' && tag === 'img') {
+          const url = safeArticleUrl(value, 'src');
+          if (url) element.setAttribute('src', url);
+        } else if (['alt','title'].includes(name) && ['a','img','th','td','span','div'].includes(tag)) {
+          element.setAttribute(name, value.slice(0, 500));
+        } else if (name === 'class' && /^[a-zA-Z0-9 _-]{1,120}$/.test(value)) {
+          element.setAttribute('class', value);
+        } else if (['width','height','colspan','rowspan'].includes(name) && /^\\d{1,4}$/.test(value)) {
+          element.setAttribute(name, value);
+        }
+      }
+      if (tag === 'img' && !element.getAttribute('src')) element.remove();
+    }
+  }).transform(new Response(html, {
+    headers: { 'content-type': 'text/html; charset=utf-8' }
+  }));
+  return await response.text();
 }
 
 const b64=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
@@ -102,7 +152,7 @@ if(p.startsWith('/api/blogger/')){
   if(m==='GET'&&!id){const rows=await env.DB.prepare('SELECT id,title,category,excerpt,status,created_at,updated_at FROM articles WHERE blogger_id=? ORDER BY created_at DESC').bind(blogger.id).all();return json(rows.results||[])}
   if(m==='GET'&&id){const row=await env.DB.prepare('SELECT id,title,category,excerpt,body,cover_url,author,status,created_at,updated_at FROM articles WHERE id=? AND blogger_id=?').bind(id,blogger.id).first();return row?json(row):json({error:'Article introuvable.'},404)}
   if(m==='POST'||(m==='PUT'&&id)){
-   const b=await req.json().catch(()=>({})),title=clean(b.title,220),body=sanitizeArticleHtml(b.body);
+   const b=await req.json().catch(()=>({})),title=clean(b.title,220),body=await sanitizeArticleHtml(b.body);
    if(!title||!body.replace(/<[^>]*>/g,'').trim())return json({error:'Titre et contenu obligatoires.'},400);
    const status=b.status==='pending'?'pending':'draft',category=clean(b.category,100),excerpt=clean(b.excerpt,1000),cover=clean(b.cover_url,2000);
    if(m==='POST'){const newId=crypto.randomUUID();await env.DB.prepare('INSERT INTO articles(id,title,category,excerpt,body,cover_url,author,status,blogger_id) VALUES(?,?,?,?,?,?,?,?,?)').bind(newId,title,category,excerpt,body,cover,blogger.name,status,blogger.id).run();return json({ok:true,id:newId,status,message:status==='pending'?'Article transmis à la rédaction pour validation.':'Brouillon enregistré.'},201)}
@@ -218,7 +268,7 @@ if(!await authorized(req,env))return json({error:'Authentification requise.'},40
 const match=p.match(/^\/api\/(albums|articles)(?:\/([^/]+))?$/);if(!match)return json({error:'Route introuvable.'},404);const kind=match[1],id=match[2],cfg=config[kind];
 if(m==='GET'&&!id){const r=await env.DB.prepare('SELECT * FROM '+kind+' ORDER BY created_at DESC').all();return json(r.results||[])}
 if(m==='GET'&&id){const r=await env.DB.prepare('SELECT * FROM '+kind+' WHERE id=?').bind(id).first();return r?json(r):json({error:'Introuvable.'},404)}
-if((m==='POST'&&!id)||(m==='PUT'&&id)){const b=await req.json().catch(()=>({}));for(const f of cfg.required)if(!clean(b[f],cfg.limits[f]))return json({error:'Champ obligatoire : '+f},400);const vals=cfg.fields.map(f=>f==='status'?(['draft','pending','published'].includes(b[f])?b[f]:'draft'):(f==='body'?sanitizeArticleHtml(b[f]):clean(b[f],cfg.limits[f])));if(m==='POST'){const newId=crypto.randomUUID(),cols=['id',...cfg.fields],marks=cols.map(()=>'?').join(',');await env.DB.prepare('INSERT INTO '+kind+'('+cols.join(',')+') VALUES('+marks+')').bind(newId,...vals).run();return json({ok:true,id:newId},201)}await env.DB.prepare('UPDATE '+kind+' SET '+cfg.fields.map(f=>f+'=?').join(',')+',updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(...vals,id).run();return json({ok:true})}
+if((m==='POST'&&!id)||(m==='PUT'&&id)){const b=await req.json().catch(()=>({}));for(const f of cfg.required)if(!clean(b[f],cfg.limits[f]))return json({error:'Champ obligatoire : '+f},400);const vals=cfg.fields.map(f=>f==='status'?(['draft','pending','published'].includes(b[f])?b[f]:'draft'):(f==='body'?await sanitizeArticleHtml(b[f]):clean(b[f],cfg.limits[f])));if(m==='POST'){const newId=crypto.randomUUID(),cols=['id',...cfg.fields],marks=cols.map(()=>'?').join(',');await env.DB.prepare('INSERT INTO '+kind+'('+cols.join(',')+') VALUES('+marks+')').bind(newId,...vals).run();return json({ok:true,id:newId},201)}await env.DB.prepare('UPDATE '+kind+' SET '+cfg.fields.map(f=>f+'=?').join(',')+',updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(...vals,id).run();return json({ok:true})}
 if(m==='DELETE'&&id){await env.DB.prepare('DELETE FROM '+kind+' WHERE id=?').bind(id).run();return json({ok:true})}return json({error:'Méthode non autorisée.'},405)}
 const pageRoutes={'/redaction':'/editor/index.html','/redaction/':'/editor/index.html','/':'/index.html','/albums':'/albums.html','/albums/':'/albums.html','/admin':'/admin.html','/admin/':'/admin.html','/admin-blogueurs':'/admin-blogueurs.html','/devenir-blogueur':'/devenir-blogueur.html','/faire-un-don':'/faire-un-don.html','/blogueur':'/blogueur.html','/blogueur/':'/blogueur.html','/article':'/article.html','/article/':'/article.html','/qui-sommes-nous':'/qui-sommes-nous.html','/qui-sommes-nous/':'/qui-sommes-nous.html'};
 export default {async fetch(req,env){const u=new URL(req.url);try{if(u.pathname.startsWith('/api/'))return await api(req,env);const assetPath=pageRoutes[u.pathname];if(assetPath){const assetUrl=new URL(assetPath,u.origin);assetUrl.search=u.search;return env.ASSETS.fetch(new Request(assetUrl,req))}return env.ASSETS.fetch(req)}catch(e){return json({error:'Erreur serveur.'},500)}}};
