@@ -117,7 +117,7 @@ if(p==='/api/article-media'&&m==='POST'){
  await env.GALLERY.put(key,await file.arrayBuffer(),{httpMetadata:{contentType:mime}});
  return json({ok:true,url:env.R2_PUBLIC_BASE.replace(/\/$/,'')+'/'+key,key},201);
 }
-if(p==='/api/blogger/articles'){
+if(p==='/api/blogger/articles'||p.startsWith('/api/blogger/articles/')){
  const blogger=await bloggerAuthorized(req,env);
  if(!blogger)return json({error:'Connexion blogueur requise.'},401);
  const idMatch=p.match(/^\\/api\\/blogger\\/articles\\/([^/]+)$/);
