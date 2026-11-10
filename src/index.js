@@ -13,10 +13,10 @@ const ARTICLE_DROP_CONTENT_TAGS = new Set([
 ]);
 function safeArticleUrl(value, kind) {
   const v = String(value || '').trim();
-  if (!v || /[\\u0000-\\u0020]/.test(v)) return '';
-  if (kind === 'href' && /^mailto:[^\\s]+$/i.test(v)) return v;
-  if (/^https?:\\/\\//i.test(v)) return v;
-  if (v.startsWith('/') && !v.startsWith('//') && !v.includes('\\\\')) return v;
+  if (!v || /[\u0000-\u0020]/.test(v)) return '';
+  if (kind === 'href' && /^mailto:[^\s]+$/i.test(v)) return v;
+  if (/^https?:\/\//i.test(v)) return v;
+  if (v.startsWith('/') && !v.startsWith('//') && !v.includes('\\')) return v;
   if (v.startsWith('#') && kind === 'href') return v;
   return '';
 }
