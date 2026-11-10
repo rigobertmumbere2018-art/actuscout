@@ -150,7 +150,7 @@ const ranking=u.pathname==='/api/public/rankings'&&m==='GET';
   const reader=await readerIdentity(req,env),headers=reader.setCookie?{'set-cookie':reader.setCookie}:{};
   await env.DB.prepare('INSERT OR IGNORE INTO article_metrics(article_id) VALUES(?)').bind(articleId).run();
   if(action==='view'){
-   const inserted=await env.DB.prepare('INSERT OR IGNORE INTO article_reads(article_id,reader_id,read_date) VALUES(?,?,date('now'))').bind(articleId,reader.id).run();
+   const inserted=await env.DB.prepare("INSERT OR IGNORE INTO article_reads(article_id,reader_id,read_date) VALUES(?,?,date('now'))").bind(articleId,reader.id).run();
    if(inserted.meta?.changes)await env.DB.prepare('UPDATE article_metrics SET views=views+1,updated_at=CURRENT_TIMESTAMP WHERE article_id=?').bind(articleId).run();
   }
   if(action==='like'){
