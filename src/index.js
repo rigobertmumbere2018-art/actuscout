@@ -120,7 +120,7 @@ if(p==='/api/article-media'&&m==='POST'){
 if(p==='/api/blogger/articles'||p.startsWith('/api/blogger/articles/')){
  const blogger=await bloggerAuthorized(req,env);
  if(!blogger)return json({error:'Connexion blogueur requise.'},401);
- const idMatch=p.match(/^\\/api\\/blogger\\/articles\\/([^/]+)$/);
+ const idMatch=p.match(/^\/api\/blogger\/articles\/([^/]+)$/);
  if(m==='GET'&&!idMatch){
   const rows=await env.DB.prepare('SELECT id,title,category,excerpt,body,cover_url,author,status,created_at,updated_at FROM articles WHERE blogger_id=? ORDER BY created_at DESC').bind(blogger.id).all();
   return json(rows.results||[]);
@@ -134,7 +134,7 @@ if(p==='/api/blogger/articles'||p.startsWith('/api/blogger/articles/')){
    .bind(id,title,clean(b.category,100),clean(b.excerpt,1000),body,clean(b.cover_url,2000),blogger.name,status,blogger.id).run();
   return json({ok:true,id},201);
  }
- const match=p.match(/^\\/api\\/blogger\\/articles\\/([^/]+)$/);
+ const match=p.match(/^\/api\/blogger\/articles\/([^/]+)$/);
  if(match&&m==='GET'){
   const row=await env.DB.prepare('SELECT id,title,category,excerpt,body,cover_url,author,status,created_at,updated_at FROM articles WHERE id=? AND blogger_id=?').bind(match[1],blogger.id).first();
   return row?json(row):json({error:'Article introuvable.'},404);
