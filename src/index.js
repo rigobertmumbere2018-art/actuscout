@@ -33,7 +33,7 @@ async function sanitizeArticleHtml(value) {
         element.removeAndKeepContent();
         return;
       }
-      const attrs = [...element.attributes];
+      const attrs = Object.entries(element.attributes || {}).map(([name, value]) => ({ name, value }));
       for (const attr of attrs) element.removeAttribute(attr.name);
       for (const attr of attrs) {
         const name = attr.name.toLowerCase();
