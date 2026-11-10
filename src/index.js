@@ -154,14 +154,14 @@ const ranking=u.pathname==='/api/public/rankings'&&m==='GET';
   const reader=await readerIdentity(req,env),headers=reader.setCookie?{'set-cookie':reader.setCookie}:{};
   await env.DB.prepare('INSERT OR IGNORE INTO article_metrics(article_id) VALUES(?)').bind(articleId).run();
   if(action==='view'){
-   const inserted=await env.DB.prepare("INSERT OR IGNORE INTO article_reads(article_id,reader_id,read_date) VALUES(?,?,date('now'))").bind(articleId,reader.id).run();
+   const inserted=await env.DB.prepare("INSERT OR IGNORE INTO article_views(article_id,visitor_id,view_date) VALUES(?,?,date('now'))").bind(articleId,reader.id).run();
    if(inserted.meta?.changes)await env.DB.prepare('UPDATE article_metrics SET views=views+1,updated_at=CURRENT_TIMESTAMP WHERE article_id=?').bind(articleId).run();
   }
   if(action==='like'){
-   const inserted=await env.DB.prepare('INSERT OR IGNORE INTO article_likes(article_id,reader_id) VALUES(?,?)').bind(articleId,reader.id).run();
+   const inserted=await env.DB.prepare('INSERT OR IGNORE INTO article_likes(article_id,visitor_id) VALUES(?,?)').bind(articleId,reader.id).run();
    if(inserted.meta?.changes)await env.DB.prepare('UPDATE article_metrics SET likes=likes+1,updated_at=CURRENT_TIMESTAMP WHERE article_id=?').bind(articleId).run();
    else{
-    const removed=await env.DB.prepare('DELETE FROM article_likes WHERE article_id=? AND reader_id=?').bind(articleId,reader.id).run();
+    const removed=await env.DB.prepare('DELETE FROM article_likes WHERE article_id=? AND visitor_id=?').bind(articleId,reader.id).run();
     if(removed.meta?.changes)await env.DB.prepare('UPDATE article_metrics SET likes=MAX(0,likes-1),updated_at=CURRENT_TIMESTAMP WHERE article_id=?').bind(articleId).run();
    }
   }
@@ -173,7 +173,7 @@ const ranking=u.pathname==='/api/public/rankings'&&m==='GET';
    ]);
   }
   const stats=await env.DB.prepare('SELECT views,likes,shares FROM article_metrics WHERE article_id=?').bind(articleId).first();
-  const liked=!!await env.DB.prepare('SELECT 1 AS yes FROM article_likes WHERE article_id=? AND reader_id=?').bind(articleId,reader.id).first();
+  const liked=!!await env.DB.prepare('SELECT 1 AS yes FROM article_likes WHERE article_id=? AND visitor_id=?').bind(articleId,reader.id).first();
   return json({...stats,liked},200,headers);
  }
  if(p==='/api/public/albums'&&m==='GET'){const r=await env.DB.prepare("SELECT id,title,description,event_date,source_url,cover_url,status,created_at,updated_at FROM albums WHERE status='published' ORDER BY created_at DESC").all();const rows=r.results||[];await Promise.all(rows.map(async a=>{try{const ph=await env.DB.prepare('SELECT id,public_url,mime_type,created_at FROM album_photos WHERE album_id=? ORDER BY created_at ASC').bind(a.id).all();a.photos=ph.results||[]}catch(e){a.photos=[];a.photos_error=true}}));return json(rows)}
