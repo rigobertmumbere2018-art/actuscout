@@ -117,6 +117,38 @@ if(p==='/api/article-media'&&m==='POST'){
  await env.GALLERY.put(key,await file.arrayBuffer(),{httpMetadata:{contentType:mime}});
  return json({ok:true,url:env.R2_PUBLIC_BASE.replace(/\/$/,'')+'/'+key,key},201);
 }
+if(p==='/api/blogger/articles'){
+ const blogger=await bloggerAuthorized(req,env);
+ if(!blogger)return json({error:'Connexion blogueur requise.'},401);
+ const idMatch=p.match(/^\\/api\\/blogger\\/articles\\/([^/]+)$/);
+ if(m==='GET'&&!idMatch){
+  const rows=await env.DB.prepare('SELECT id,title,category,excerpt,body,cover_url,author,status,created_at,updated_at FROM articles WHERE blogger_id=? ORDER BY created_at DESC').bind(blogger.id).all();
+  return json(rows.results||[]);
+ }
+ if(m==='POST'){
+  const b=await req.json().catch(()=>({}));
+  const title=clean(b.title,220),body=await sanitizeArticleHtml(b.body);
+  if(!title||!body)return json({error:'Titre et contenu obligatoires.'},400);
+  const status=b.status==='pending'?'pending':'draft',id=crypto.randomUUID();
+  await env.DB.prepare('INSERT INTO articles(id,title,category,excerpt,body,cover_url,author,status,blogger_id) VALUES(?,?,?,?,?,?,?,?,?)')
+   .bind(id,title,clean(b.category,100),clean(b.excerpt,1000),body,clean(b.cover_url,2000),blogger.name,status,blogger.id).run();
+  return json({ok:true,id},201);
+ }
+ const match=p.match(/^\\/api\\/blogger\\/articles\\/([^/]+)$/);
+ if(match&&m==='GET'){
+  const row=await env.DB.prepare('SELECT id,title,category,excerpt,body,cover_url,author,status,created_at,updated_at FROM articles WHERE id=? AND blogger_id=?').bind(match[1],blogger.id).first();
+  return row?json(row):json({error:'Article introuvable.'},404);
+ }
+ if(match&&m==='PUT'){
+  const b=await req.json().catch(()=>({})),title=clean(b.title,220),body=await sanitizeArticleHtml(b.body);
+  if(!title||!body)return json({error:'Titre et contenu obligatoires.'},400);
+  const status=b.status==='pending'?'pending':'draft';
+  const result=await env.DB.prepare('UPDATE articles SET title=?,category=?,excerpt=?,body=?,cover_url=?,author=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND blogger_id=?')
+   .bind(title,clean(b.category,100),clean(b.excerpt,1000),body,clean(b.cover_url,2000),blogger.name,status,match[1],blogger.id).run();
+  return result.meta?.changes?json({ok:true}):json({error:'Article introuvable.'},404);
+ }
+ return json({error:'Méthode non autorisée.'},405);
+}
 if(p==='/api/upload'&&m==='POST'){if(!await authorized(req,env))return json({error:'Authentification requise.'},401);if(!env.GALLERY||!env.R2_PUBLIC_BASE)return json({error:'Stockage R2 non configuré.'},503);const form=await req.formData();const file=form.get('file'),albumId=clean(form.get('album_id'),100);if(!file||typeof file.arrayBuffer!=='function'||!file.size)return json({error:'Choisis un fichier à envoyer.'},400);if(file.size>10*1024*1024)return json({error:'Fichier trop volumineux : limite de 10 Mo.'},413);const mime=file.type||'application/octet-stream';if(!mime.startsWith('image/')&&!mime.startsWith('video/'))return json({error:'Seules les images et vidéos sont acceptées.'},415);const album=await env.DB.prepare('SELECT id FROM albums WHERE id=?').bind(albumId).first();if(!album)return json({error:'Album introuvable.'},404);const ext=(file.name.split('.').pop()||'bin').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,8)||'bin';const key='albums/'+albumId+'/'+crypto.randomUUID()+'.'+ext;await env.GALLERY.put(key,await file.arrayBuffer(),{httpMetadata:{contentType:mime}});const url=env.R2_PUBLIC_BASE.replace(/\/$/,'')+'/'+key;const id=crypto.randomUUID();await env.DB.prepare('INSERT INTO album_photos(id,album_id,object_key,public_url,mime_type) VALUES(?,?,?,?,?)').bind(id,albumId,key,url,mime).run();if(mime.startsWith('image/'))await env.DB.prepare("UPDATE albums SET cover_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND (cover_url IS NULL OR cover_url='')").bind(url,albumId).run();return json({ok:true,id,url,key},201)}
 
 if(p==='/api/blogger/apply'&&m==='POST'){
