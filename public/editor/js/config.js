@@ -1,0 +1,1 @@
+window.ACTUSCOUT_CONFIG={context:new URLSearchParams(location.search).get("context")==="blogger"?"blogger":"admin",endpoints:{adminArticles:"/api/articles",bloggerArticles:"/api/blogger/articles",uploadImage:"/api/article-media"},maxImageMo:10};
