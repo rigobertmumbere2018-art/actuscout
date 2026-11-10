@@ -145,6 +145,10 @@ const ranking=u.pathname==='/api/public/rankings'&&m==='GET';
   if(!env.SESSION_SECRET)return json({error:'Statistiques indisponibles : configuration de sécurité manquante.'},503);
   const articleId=decodeURIComponent(interaction[1]),action=interaction[2];
   if((action==='metrics'&&m!=='GET')||(action!=='metrics'&&m!=='POST'))return json({error:'Méthode non autorisée.'},405);
+  if(action!=='metrics'){
+   const origin=req.headers.get('Origin');
+   if(!origin||origin!==u.origin)return json({error:'Origine de requête non autorisée.'},403);
+  }
   const article=await env.DB.prepare("SELECT id FROM articles WHERE id=? AND status='published'").bind(articleId).first();
   if(!article)return json({error:'Article introuvable.'},404);
   const reader=await readerIdentity(req,env),headers=reader.setCookie?{'set-cookie':reader.setCookie}:{};
