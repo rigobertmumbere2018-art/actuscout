@@ -3,10 +3,10 @@ const json=(d,s=200,h={})=>new Response(JSON.stringify(d),{status:s,headers:{'co
 const clean=(v,n=100000)=>typeof v==='string'?v.trim().slice(0,n):'';
 function sanitizeArticleHtml(value) {
   let html = String(value || '').slice(0, 100000);
-  html = html.replace(/<\\s*(script|iframe|object|embed|form|input|button|textarea|style|link|meta)[^>]*>[\\s\\S]*?<\\s*\\/\\s*\\1\\s*>/gi, '');
-  html = html.replace(/<\\s*(script|iframe|object|embed|form|input|button|textarea|style|link|meta)\\b[^>]*\\/?\\s*>/gi, '');
-  html = html.replace(/\\s+on[a-z]+\\s*=\\s*("[^"]*"|'[^']*'|[^\\s>]+)/gi, '');
-  html = html.replace(/\\s+(href|src)\\s*=\\s*(["'])\\s*(javascript|vbscript|data:text\\/html):[\\s\\S]*?\\2/gi, ' $1="#"');
+  html = html.replace(/<\s*(script|iframe|object|embed|form|input|button|textarea|style|link|meta)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '');
+  html = html.replace(/<\s*(script|iframe|object|embed|form|input|button|textarea|style|link|meta)\b[^>]*\/?\s*>/gi, '');
+  html = html.replace(/\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+  html = html.replace(/\s+(href|src)\s*=\s*(["'])\s*(javascript|vbscript|data:text\/html):[\s\S]*?\2/gi, ' $1="#"');
   return html;
 }
 
