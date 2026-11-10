@@ -162,8 +162,11 @@ const ranking=u.pathname==='/api/public/rankings'&&m==='GET';
    }
   }
   if(action==='share'){
-   const inserted=await env.DB.prepare('INSERT OR IGNORE INTO article_shares(article_id,reader_id) VALUES(?,?)').bind(articleId,reader.id).run();
-   if(inserted.meta?.changes)await env.DB.prepare('UPDATE article_metrics SET shares=shares+1,updated_at=CURRENT_TIMESTAMP WHERE article_id=?').bind(articleId).run();
+   const eventId=crypto.randomUUID();
+   await env.DB.batch([
+    env.DB.prepare('INSERT INTO article_share_events(id,article_id,reader_id) VALUES(?,?,?)').bind(eventId,articleId,reader.id),
+    env.DB.prepare('UPDATE article_metrics SET shares=shares+1,updated_at=CURRENT_TIMESTAMP WHERE article_id=?').bind(articleId)
+   ]);
   }
   const stats=await env.DB.prepare('SELECT views,likes,shares FROM article_metrics WHERE article_id=?').bind(articleId).first();
   const liked=!!await env.DB.prepare('SELECT 1 AS yes FROM article_likes WHERE article_id=? AND reader_id=?').bind(articleId,reader.id).first();
