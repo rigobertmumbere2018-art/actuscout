@@ -307,6 +307,11 @@ const ranking=u.pathname==='/api/public/rankings'&&m==='GET';
     if(removed.meta?.changes)await env.DB.prepare('UPDATE article_metrics SET likes=MAX(0,likes-1),updated_at=CURRENT_TIMESTAMP WHERE article_id=?').bind(articleId).run();
    }
   }
+  if(action==='bookmark'){
+   const existing=await env.DB.prepare('SELECT 1 AS yes FROM article_bookmarks WHERE article_id=? AND visitor_id=?').bind(articleId,reader.id).first();
+   if(existing)await env.DB.prepare('DELETE FROM article_bookmarks WHERE article_id=? AND visitor_id=?').bind(articleId,reader.id).run();
+   else await env.DB.prepare('INSERT OR IGNORE INTO article_bookmarks(article_id,visitor_id) VALUES(?,?)').bind(articleId,reader.id).run();
+  }
   if(action==='share'){
    const eventId=crypto.randomUUID();
    await env.DB.batch([
