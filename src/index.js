@@ -134,7 +134,7 @@ if(p==='/api/blogger/articles'||p.startsWith('/api/blogger/articles/')){
   const b=await req.json().catch(()=>({}));
   const title=clean(b.title,220),body=await sanitizeArticleHtml(b.body);
   if(!title||!body)return json({error:'Titre et contenu obligatoires.'},400);if(['pending','published'].includes(b.status)&&!/^https:\/\//i.test(clean(b.cover_url,2000)))return json({error:'Une photo de couverture valide est obligatoire avant la soumission ou la publication.'},400);
-  if(b.status==='published'&&!await bloggerCan(env,blogger.id,'publish_articles'))return json({error:'La publication directe ne vous est pas autorisée.'},403);const status=b.status==='published'?'published':b.status==='pending'?'pending':'draft',id=crypto.randomUUID();
+  if(b.status==='published')return json({error:'Les blogueurs ne peuvent pas publier directement. Soumets l’article à la rédaction.'},403);const status=b.status==='pending'?'pending':'draft',id=crypto.randomUUID();
   await env.DB.prepare('INSERT INTO articles(id,title,category,excerpt,body,cover_url,author,status,blogger_id) VALUES(?,?,?,?,?,?,?,?,?)')
    .bind(id,title,clean(b.category,100),clean(b.excerpt,1000),body,clean(b.cover_url,2000),blogger.name,status,blogger.id).run();
   return json({ok:true,id},201);
@@ -148,7 +148,7 @@ if(p==='/api/blogger/articles'||p.startsWith('/api/blogger/articles/')){
   if(!await bloggerCan(env,blogger.id,'edit_own_articles'))return json({error:'La modification de vos articles ne vous a pas été autorisée.'},403);if(!(await bloggerTraining(env,blogger.id)).complete)return json({error:'Terminez la formation initiale avant de modifier un article.'},403);
   const b=await req.json().catch(()=>({})),title=clean(b.title,220),body=await sanitizeArticleHtml(b.body);
   if(!title||!body)return json({error:'Titre et contenu obligatoires.'},400);
-  if(b.status==='published'&&!await bloggerCan(env,blogger.id,'publish_articles'))return json({error:'La publication directe ne vous est pas autorisée.'},403);const status=b.status==='published'?'published':b.status==='pending'?'pending':'draft';
+  if(b.status==='published')return json({error:'Les blogueurs ne peuvent pas publier directement. Soumets l’article à la rédaction.'},403);const status=b.status==='pending'?'pending':'draft';
   const result=await env.DB.prepare('UPDATE articles SET title=?,category=?,excerpt=?,body=?,cover_url=?,author=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND blogger_id=?')
    .bind(title,clean(b.category,100),clean(b.excerpt,1000),body,clean(b.cover_url,2000),blogger.name,status,match[1],blogger.id).run();
   return result.meta?.changes?json({ok:true}):json({error:'Article introuvable.'},404);
@@ -196,7 +196,7 @@ if(p.startsWith('/api/blogger/')){
    if(m==='POST'&&!await bloggerCan(env,blogger.id,'write_articles'))return json({error:'La rédaction d’articles ne vous a pas été autorisée.'},403);if(m==='PUT'&&!await bloggerCan(env,blogger.id,'edit_own_articles'))return json({error:'La modification de vos articles ne vous a pas été autorisée.'},403);if(!(await bloggerTraining(env,blogger.id)).complete)return json({error:'Terminez la formation initiale avant de rédiger.'},403);
    const b=await req.json().catch(()=>({})),title=clean(b.title,220),body=await sanitizeArticleHtml(b.body);
    if(!title||!body.replace(/<[^>]*>/g,'').trim())return json({error:'Titre et contenu obligatoires.'},400);if(['pending','published'].includes(b.status)&&!/^https:\/\//i.test(clean(b.cover_url,2000)))return json({error:'Une photo de couverture valide est obligatoire avant la soumission ou la publication.'},400);
-   if(b.status==='published'&&!await bloggerCan(env,blogger.id,'publish_articles'))return json({error:'La publication directe ne vous est pas autorisée.'},403);const status=b.status==='published'?'published':b.status==='pending'?'pending':'draft',category=clean(b.category,100),excerpt=clean(b.excerpt,1000),cover=clean(b.cover_url,2000);
+   if(b.status==='published')return json({error:'Les blogueurs ne peuvent pas publier directement. Soumets l’article à la rédaction.'},403);const status=b.status==='pending'?'pending':'draft',category=clean(b.category,100),excerpt=clean(b.excerpt,1000),cover=clean(b.cover_url,2000);
    if(m==='POST'){const newId=crypto.randomUUID();await env.DB.prepare('INSERT INTO articles(id,title,category,excerpt,body,cover_url,author,status,blogger_id) VALUES(?,?,?,?,?,?,?,?,?)').bind(newId,title,category,excerpt,body,cover,blogger.name,status,blogger.id).run();return json({ok:true,id:newId,status,message:status==='pending'?'Article transmis à la rédaction pour validation.':'Brouillon enregistré.'},201)}
    const result=await env.DB.prepare('UPDATE articles SET title=?,category=?,excerpt=?,body=?,cover_url=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND blogger_id=?').bind(title,category,excerpt,body,cover,status,id,blogger.id).run();
    if(!result.meta?.changes)return json({error:'Article introuvable ou accès refusé.'},404);
