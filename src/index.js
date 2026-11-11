@@ -130,10 +130,11 @@ if(p==='/api/blogger/articles'||p.startsWith('/api/blogger/articles/')){
   return json(rows.results||[]);
  }
  if(m==='POST'){
+  if(!await bloggerCan(env,blogger.id,'write_articles'))return json({error:'La rédaction d’articles ne vous a pas été autorisée.'},403);if(!(await bloggerTraining(env,blogger.id)).complete)return json({error:'Terminez la formation initiale avant de rédiger.'},403);
   const b=await req.json().catch(()=>({}));
   const title=clean(b.title,220),body=await sanitizeArticleHtml(b.body);
   if(!title||!body)return json({error:'Titre et contenu obligatoires.'},400);
-  const status=b.status==='pending'?'pending':'draft',id=crypto.randomUUID();
+  if(b.status==='published'&&!await bloggerCan(env,blogger.id,'publish_articles'))return json({error:'La publication directe ne vous est pas autorisée.'},403);const status=b.status==='published'?'published':b.status==='pending'?'pending':'draft',id=crypto.randomUUID();
   await env.DB.prepare('INSERT INTO articles(id,title,category,excerpt,body,cover_url,author,status,blogger_id) VALUES(?,?,?,?,?,?,?,?,?)')
    .bind(id,title,clean(b.category,100),clean(b.excerpt,1000),body,clean(b.cover_url,2000),blogger.name,status,blogger.id).run();
   return json({ok:true,id},201);
@@ -144,16 +145,17 @@ if(p==='/api/blogger/articles'||p.startsWith('/api/blogger/articles/')){
   return row?json(row):json({error:'Article introuvable.'},404);
  }
  if(match&&m==='PUT'){
+  if(!await bloggerCan(env,blogger.id,'edit_own_articles'))return json({error:'La modification de vos articles ne vous a pas été autorisée.'},403);if(!(await bloggerTraining(env,blogger.id)).complete)return json({error:'Terminez la formation initiale avant de modifier un article.'},403);
   const b=await req.json().catch(()=>({})),title=clean(b.title,220),body=await sanitizeArticleHtml(b.body);
   if(!title||!body)return json({error:'Titre et contenu obligatoires.'},400);
-  const status=b.status==='pending'?'pending':'draft';
+  if(b.status==='published'&&!await bloggerCan(env,blogger.id,'publish_articles'))return json({error:'La publication directe ne vous est pas autorisée.'},403);const status=b.status==='published'?'published':b.status==='pending'?'pending':'draft';
   const result=await env.DB.prepare('UPDATE articles SET title=?,category=?,excerpt=?,body=?,cover_url=?,author=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND blogger_id=?')
    .bind(title,clean(b.category,100),clean(b.excerpt,1000),body,clean(b.cover_url,2000),blogger.name,status,match[1],blogger.id).run();
   return result.meta?.changes?json({ok:true}):json({error:'Article introuvable.'},404);
  }
  return json({error:'Méthode non autorisée.'},405);
 }
-if(p==='/api/upload'&&m==='POST'){if(!await authorized(req,env))return json({error:'Authentification requise.'},401);if(!env.GALLERY||!env.R2_PUBLIC_BASE)return json({error:'Stockage R2 non configuré.'},503);const form=await req.formData();const file=form.get('file'),albumId=clean(form.get('album_id'),100);if(!file||typeof file.arrayBuffer!=='function'||!file.size)return json({error:'Choisis un fichier à envoyer.'},400);if(file.size>10*1024*1024)return json({error:'Fichier trop volumineux : limite de 10 Mo.'},413);const mime=file.type||'application/octet-stream';if(!mime.startsWith('image/')&&!mime.startsWith('video/'))return json({error:'Seules les images et vidéos sont acceptées.'},415);const album=await env.DB.prepare('SELECT id FROM albums WHERE id=?').bind(albumId).first();if(!album)return json({error:'Album introuvable.'},404);const ext=(file.name.split('.').pop()||'bin').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,8)||'bin';const key='albums/'+albumId+'/'+crypto.randomUUID()+'.'+ext;await env.GALLERY.put(key,await file.arrayBuffer(),{httpMetadata:{contentType:mime}});const url=env.R2_PUBLIC_BASE.replace(/\/$/,'')+'/'+key;const id=crypto.randomUUID();await env.DB.prepare('INSERT INTO album_photos(id,album_id,object_key,public_url,mime_type) VALUES(?,?,?,?,?)').bind(id,albumId,key,url,mime).run();if(mime.startsWith('image/'))await env.DB.prepare("UPDATE albums SET cover_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND (cover_url IS NULL OR cover_url='')").bind(url,albumId).run();return json({ok:true,id,url,key},201)}
+if(p==='/api/upload'&&m==='POST'){const admin=await authorized(req,env),blogger=admin?null:await bloggerAuthorized(req,env);if(!admin&&(!blogger||!await bloggerCan(env,blogger.id,'manage_albums')))return json({error:'La gestion des albums ne vous a pas été autorisée.'},403);if(!env.GALLERY||!env.R2_PUBLIC_BASE)return json({error:'Stockage R2 non configuré.'},503);const form=await req.formData();const file=form.get('file'),albumId=clean(form.get('album_id'),100);if(!file||typeof file.arrayBuffer!=='function'||!file.size)return json({error:'Choisis un fichier à envoyer.'},400);if(file.size>10*1024*1024)return json({error:'Fichier trop volumineux : limite de 10 Mo.'},413);const mime=file.type||'application/octet-stream';if(!mime.startsWith('image/')&&!mime.startsWith('video/'))return json({error:'Seules les images et vidéos sont acceptées.'},415);const album=await env.DB.prepare('SELECT id FROM albums WHERE id=?').bind(albumId).first();if(!album)return json({error:'Album introuvable.'},404);const ext=(file.name.split('.').pop()||'bin').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,8)||'bin';const key='albums/'+albumId+'/'+crypto.randomUUID()+'.'+ext;await env.GALLERY.put(key,await file.arrayBuffer(),{httpMetadata:{contentType:mime}});const url=env.R2_PUBLIC_BASE.replace(/\/$/,'')+'/'+key;const id=crypto.randomUUID();await env.DB.prepare('INSERT INTO album_photos(id,album_id,object_key,public_url,mime_type) VALUES(?,?,?,?,?)').bind(id,albumId,key,url,mime).run();if(mime.startsWith('image/'))await env.DB.prepare("UPDATE albums SET cover_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND (cover_url IS NULL OR cover_url='')").bind(url,albumId).run();return json({ok:true,id,url,key},201)}
 
 if(p==='/api/blogger/apply'&&m==='POST'){
  const f=await req.formData(),name=clean(f.get('name'),160),email=clean(f.get('email'),200).toLowerCase(),phone=clean(f.get('phone'),60),city=clean(f.get('city'),120),motivation=clean(f.get('motivation'),5000),file=f.get('cv');
