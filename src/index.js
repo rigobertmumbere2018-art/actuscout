@@ -44,7 +44,7 @@ if(p==='/api/article-media'&&m==='POST'){
  const admin=await authorized(req,env),blogger=admin?null:await bloggerAuthorized(req,env);
  if(!admin&&!blogger)return json({error:'Connexion requise.'},401);
  if(!env.GALLERY||!env.R2_PUBLIC_BASE)return json({error:'Stockage R2 non configuré.'},503);
- const form=await req.formData(),file=form.get('file');
+ const form=await req.formData(),file=form.get('file'),purpose=clean(form.get('purpose'),20);if(blogger&&purpose==='word'&&!await bloggerCan(env,blogger.id,'import_word'))return json({error:'L’importation Word ne vous a pas été autorisée.'},403);
  if(!file||typeof file.arrayBuffer!=='function'||!file.size)return json({error:'Choisis une image à envoyer.'},400);
  if(file.size>10*1024*1024)return json({error:'Image trop volumineuse : limite de 10 Mo.'},413);
  const mime=(file.type||'').toLowerCase(),types={'image/jpeg':'jpg','image/png':'png','image/webp':'webp','image/gif':'gif','image/avif':'avif'};
