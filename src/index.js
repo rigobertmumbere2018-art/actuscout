@@ -271,7 +271,7 @@ if(p==='/api/login'&&m==='POST'){const b=await req.json().catch(()=>({}));if(!en
 if(p==='/api/logout'&&m==='POST')return json({ok:true},200,{'set-cookie':COOKIE+'=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0'});
 const ranking=u.pathname==='/api/public/rankings'&&m==='GET';
  if(ranking){const by=['views','likes','shares','comments','bookmarks'].includes(u.searchParams.get('by'))?u.searchParams.get('by'):'views',limit=Math.min(20,Math.max(1,Number(u.searchParams.get('limit'))||5));const rows=await env.DB.prepare("SELECT a.id,a.title,a.category,a.cover_url,a.author,a.created_at,COALESCE(m.views,0) AS views,COALESCE(m.likes,0) AS likes,COALESCE(m.shares,0) AS shares,(SELECT COUNT(*) FROM article_comments c WHERE c.article_id=a.id AND c.status='approved') AS comments,(SELECT COUNT(*) FROM article_bookmarks b WHERE b.article_id=a.id) AS bookmarks FROM articles a LEFT JOIN article_metrics m ON m.article_id=a.id WHERE a.status='published' ORDER BY "+by+" DESC,a.created_at DESC LIMIT ?").bind(limit).all();return json(rows.results||[])}
- const commentsRoute=p.match(/^\\/api\\/public\\/articles\\/([^/]+)\\/comments$/);
+ const commentsRoute=p.match(/^\/api\/public\/articles\/([^/]+)\/comments$/);
  if(commentsRoute){
   const articleId=decodeURIComponent(commentsRoute[1]),article=await env.DB.prepare("SELECT id FROM articles WHERE id=? AND status='published'").bind(articleId).first();if(!article)return json({error:'Article introuvable.'},404);
   if(m==='GET'){const rows=await env.DB.prepare("SELECT id,author_name,content,created_at FROM article_comments WHERE article_id=? AND status='approved' ORDER BY created_at DESC LIMIT 100").bind(articleId).all();return json({comments:rows.results||[],total:(rows.results||[]).length})}
@@ -280,7 +280,7 @@ const ranking=u.pathname==='/api/public/rankings'&&m==='GET';
  }
  const adminComments=p==='/api/admin/comments';
  if(adminComments){if(!await authorized(req,env))return json({error:'Authentification requise.'},401);if(m==='GET'){const status=['pending','approved','rejected'].includes(u.searchParams.get('status'))?u.searchParams.get('status'):'pending';const rows=await env.DB.prepare('SELECT c.id,c.article_id,c.author_name,c.content,c.status,c.created_at,a.title AS article_title FROM article_comments c LEFT JOIN articles a ON a.id=c.article_id WHERE c.status=? ORDER BY c.created_at DESC LIMIT 200').bind(status).all();return json(rows.results||[])}return json({error:'Méthode non autorisée.'},405)}
- const adminCommentAction=p.match(/^\\/api\\/admin\\/comments\\/([^/]+)\\/(approve|reject|delete)$/);
+ const adminCommentAction=p.match(/^\/api\/admin\/comments\/([^/]+)\/(approve|reject|delete)$/);
  if(adminCommentAction){if(!await authorized(req,env))return json({error:'Authentification requise.'},401);if(m!=='POST')return json({error:'Méthode non autorisée.'},405);const id=decodeURIComponent(adminCommentAction[1]),action=adminCommentAction[2];if(action==='delete')await env.DB.prepare('DELETE FROM article_comments WHERE id=?').bind(id).run();else await env.DB.prepare('UPDATE article_comments SET status=? WHERE id=?').bind(action==='approve'?'approved':'rejected',id).run();return json({ok:true})}
  const interaction=p.match(/^\/api\/public\/articles\/([^/]+)\/(metrics|view|like|share|bookmark)$/);
  if(interaction){
