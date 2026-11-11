@@ -1,10 +1,186 @@
+# ActuScout — règles d’exploration
+# Les règles robots.txt ne remplacent pas les contrôles d’accès du serveur.
+
 User-agent: *
 Allow: /
 Disallow: /admin
 Disallow: /admin/
 Disallow: /admin-blogueurs
-Disallow: /api/
+Disallow: /admin-blogueurs/
 Disallow: /blogueur
 Disallow: /blogueur/
+Disallow: /redaction
+Disallow: /redaction/
+Disallow: /editor/
+Disallow: /api/
+
+User-agent: GPTBot
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /admin-blogueurs
+Disallow: /admin-blogueurs/
+Disallow: /blogueur
+Disallow: /blogueur/
+Disallow: /redaction
+Disallow: /redaction/
+Disallow: /editor/
+Disallow: /api/
+
+User-agent: OAI-SearchBot
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /admin-blogueurs
+Disallow: /admin-blogueurs/
+Disallow: /blogueur
+Disallow: /blogueur/
+Disallow: /redaction
+Disallow: /redaction/
+Disallow: /editor/
+Disallow: /api/
+
+User-agent: ChatGPT-User
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /admin-blogueurs
+Disallow: /admin-blogueurs/
+Disallow: /blogueur
+Disallow: /blogueur/
+Disallow: /redaction
+Disallow: /redaction/
+Disallow: /editor/
+Disallow: /api/
+
+User-agent: ClaudeBot
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /admin-blogueurs
+Disallow: /admin-blogueurs/
+Disallow: /blogueur
+Disallow: /blogueur/
+Disallow: /redaction
+Disallow: /redaction/
+Disallow: /editor/
+Disallow: /api/
+
+User-agent: Claude-SearchBot
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /admin-blogueurs
+Disallow: /admin-blogueurs/
+Disallow: /blogueur
+Disallow: /blogueur/
+Disallow: /redaction
+Disallow: /redaction/
+Disallow: /editor/
+Disallow: /api/
+
+User-agent: Claude-User
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /admin-blogueurs
+Disallow: /admin-blogueurs/
+Disallow: /blogueur
+Disallow: /blogueur/
+Disallow: /redaction
+Disallow: /redaction/
+Disallow: /editor/
+Disallow: /api/
+
+User-agent: PerplexityBot
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /admin-blogueurs
+Disallow: /admin-blogueurs/
+Disallow: /blogueur
+Disallow: /blogueur/
+Disallow: /redaction
+Disallow: /redaction/
+Disallow: /editor/
+Disallow: /api/
+
+User-agent: Perplexity-User
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /admin-blogueurs
+Disallow: /admin-blogueurs/
+Disallow: /blogueur
+Disallow: /blogueur/
+Disallow: /redaction
+Disallow: /redaction/
+Disallow: /editor/
+Disallow: /api/
+
+User-agent: Google-Extended
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /admin-blogueurs
+Disallow: /admin-blogueurs/
+Disallow: /blogueur
+Disallow: /blogueur/
+Disallow: /redaction
+Disallow: /redaction/
+Disallow: /editor/
+Disallow: /api/
+
+User-agent: Bytespider
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /admin-blogueurs
+Disallow: /admin-blogueurs/
+Disallow: /blogueur
+Disallow: /blogueur/
+Disallow: /redaction
+Disallow: /redaction/
+Disallow: /editor/
+Disallow: /api/
+
+User-agent: Amazonbot
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /admin-blogueurs
+Disallow: /admin-blogueurs/
+Disallow: /blogueur
+Disallow: /blogueur/
+Disallow: /redaction
+Disallow: /redaction/
+Disallow: /editor/
+Disallow: /api/
+
+User-agent: Applebot-Extended
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /admin-blogueurs
+Disallow: /admin-blogueurs/
+Disallow: /blogueur
+Disallow: /blogueur/
+Disallow: /redaction
+Disallow: /redaction/
+Disallow: /editor/
+Disallow: /api/
+
+User-agent: Meta-ExternalAgent
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /admin-blogueurs
+Disallow: /admin-blogueurs/
+Disallow: /blogueur
+Disallow: /blogueur/
+Disallow: /redaction
+Disallow: /redaction/
+Disallow: /editor/
+Disallow: /api/
 
 Sitemap: https://actuscout.com/sitemap.xml
