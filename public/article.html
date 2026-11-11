@@ -99,11 +99,9 @@ function renderRelated(current,all){
 async function load(){
  if(!articleId){main.innerHTML='<div class="state"><h1>Article introuvable</h1><p>Aucun identifiant d’article n’a été fourni.</p><a href="/">Retour aux actualités</a></div>';return}
  try{
-  const response=await fetch('/api/public/articles',{headers:{accept:'application/json'},cache:'no-store'});
-  if(!response.ok)throw new Error('Impossible de charger les articles');
-  const all=await response.json();
-  if(!Array.isArray(all))throw new Error('Réponse invalide');
-  const article=all.find(item=>String(item.id)===articleId);
+  const response=await fetch('/api/public/articles/'+encodeURIComponent(articleId),{headers:{accept:'application/json'},cache:'no-store'});
+  if(!response.ok)throw new Error('Impossible de charger cet article');
+  const article=await response.json();
   if(!article){main.innerHTML='<div class="state"><h1>Article introuvable</h1><p>Cet article n’est plus disponible ou son lien est incorrect.</p><a href="/">Retour aux actualités</a></div>';return}
   document.title=(article.title||'Article')+' | ActuScout';
   const description=document.querySelector('meta[name="description"]');if(description)description.content=article.excerpt||article.title||'Lire ActuScout';
