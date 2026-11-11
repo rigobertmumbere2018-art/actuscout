@@ -144,8 +144,7 @@ document.getElementById('contactForm').addEventListener('submit',e=>{e.preventDe
  const updateArrows=()=>{if(!viewport||!prev||!next)return;const max=viewport.scrollWidth-viewport.clientWidth;prev.disabled=viewport.scrollLeft<=2;next.disabled=max<=2||viewport.scrollLeft>=max-2};
  const scrollStep=direction=>{if(!viewport||!grid)return;const card=grid.querySelector('.album'),gap=parseFloat(getComputedStyle(grid).gap)||0,amount=card?card.getBoundingClientRect().width+gap:viewport.clientWidth*.85,max=viewport.scrollWidth-viewport.clientWidth;if(direction>0&&viewport.scrollLeft>=max-3)viewport.scrollTo({left:0,behavior:'smooth'});else viewport.scrollBy({left:direction*amount,behavior:'smooth'})};
  const startAuto=()=>{stopAuto();if(!viewport||!grid||window.matchMedia('(prefers-reduced-motion: reduce)').matches||grid.querySelectorAll('.album').length<2)return;autoTimer=setInterval(()=>{if(document.hidden||viewport.matches(':hover')||viewport.contains(document.activeElement))return;scrollStep(1)},4800)};
- try{
-  const timedFetch=(url,ms=8000)=>Promise.race([fetch(url,{headers:{accept:'application/json'},cache:'no-store'}),new Promise(resolve=>setTimeout(()=>resolve(null),ms))]);
+ const timedFetch=(url,ms=8000)=>Promise.race([fetch(url,{headers:{accept:'application/json'},cache:'no-store'}),new Promise(resolve=>setTimeout(()=>resolve(null),ms))]);
   const [albumResult,articleResult]=await Promise.allSettled([timedFetch('/api/public/albums',5000),timedFetch('/api/public/articles?limit=10&page=1',8000)]);
   if(grid){
    if(albumResult.status!=='fulfilled'||!albumResult.value?.ok){grid.innerHTML='<p class="album-empty">Albums momentanément indisponibles.</p>';if(prev)prev.hidden=true;if(next)next.hidden=true;}else{
