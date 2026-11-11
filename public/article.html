@@ -130,7 +130,16 @@ async function load(){
    likeButton.addEventListener('click',async()=>{likeButton.disabled=true;try{const response=await fetch(statsUrl+'/like',{method:'POST',headers:{accept:'application/json'}});if(!response.ok)throw new Error();setCounts(await response.json())}catch{feedback.textContent='Impossible d’enregistrer votre réaction.'}finally{likeButton.disabled=false}});
    shareButton.addEventListener('click',async()=>{const shareData={title:article.title||'ActuScout',text:article.excerpt||article.title||'',url:location.href};try{if(navigator.share)await navigator.share(shareData);else if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(shareData.url);feedback.textContent='Lien copié.'}else{feedback.textContent='Copiez l’adresse de cette page pour la partager.';return}const response=await fetch(statsUrl+'/share',{method:'POST',headers:{accept:'application/json'}});if(response.ok)setCounts(await response.json())}catch(error){if(error.name!=='AbortError')feedback.textContent='Le partage n’a pas pu être enregistré.'}});
   }catch(error){likeButton.disabled=true;shareButton.disabled=true;feedback.textContent='Les statistiques sont momentanément indisponibles.'}
-  const related=renderRelated(article,all);if(related)main.appendChild(related);
+  try {
+   const relatedResponse=await fetch('/api/public/articles?limit=10&page=1',{headers:{accept:'application/json'},cache:'no-store'});
+   if(relatedResponse.ok){
+    const relatedPayload=await relatedResponse.json();
+    const related=renderRelated(article,Array.isArray(relatedPayload.articles)?relatedPayload.articles:[]);
+    if(related)main.appendChild(related);
+   }
+  } catch(relatedError) {
+   console.warn('ActuScout — articles associés indisponibles:',relatedError);
+  }
  }catch(error){console.error('ActuScout — lecture article:',error);main.innerHTML='<div class="state"><h1>Article momentanément indisponible</h1><p>Une erreur empêche le chargement de cet article. Réessayez dans quelques instants.</p><a href="/">Retour aux actualités</a></div>'}
 }
 load();
