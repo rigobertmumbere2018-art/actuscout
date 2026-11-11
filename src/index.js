@@ -100,6 +100,10 @@ const BLOG_COOKIE='as_blogger';
 async function makeBloggerSession(env,id){const p=b64(enc.encode(JSON.stringify({id,exp:Date.now()+28800000})));return p+'.'+await mac(env.SESSION_SECRET,p)}
 async function bloggerAuthorized(req,env){const c=(req.headers.get('Cookie')||'').split(';').map(x=>x.trim()).find(x=>x.startsWith(BLOG_COOKIE+'='));if(!c||!env.SESSION_SECRET)return null;const [p,s]=c.slice(BLOG_COOKIE.length+1).split('.');if(!p||!s||s!==await mac(env.SESSION_SECRET,p))return null;try{const v=JSON.parse(atob(p.replace(/-/g,'+').replace(/_/g,'/')));if(v.exp<Date.now())return null;return await env.DB.prepare("SELECT id,name,email,phone,status FROM bloggers WHERE id=? AND status='active'").bind(v.id).first()}catch{return null}}
 
+const BLOGGER_PERMISSIONS=['write_articles','edit_own_articles','publish_articles','manage_albums','manage_carousel','feature_articles','import_word','manage_bloggers'];
+const TRAINING_LESSONS=['workspace','article','word','photos','external','submit'];
+async function bloggerCan(env,id,key){const row=await env.DB.prepare('SELECT enabled FROM blogger_permissions WHERE blogger_id=? AND permission=?').bind(id,key).first();return !!row?.enabled}
+async function bloggerTraining(env,id){const r=await env.DB.prepare('SELECT lesson_key FROM blogger_training WHERE blogger_id=?').bind(id).all();const done=new Set((r.results||[]).map(x=>x.lesson_key));return {lessons:TRAINING_LESSONS.map(key=>({key,completed:done.has(key)})),complete:TRAINING_LESSONS.every(key=>done.has(key))}}
 function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 async function sendActuScoutMail(env,to,subject,html){if(!env.RESEND_API_KEY||!env.ACTUSCOUT_EMAIL_FROM)return false;const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:'Bearer '+env.RESEND_API_KEY,'content-type':'application/json'},body:JSON.stringify({from:env.ACTUSCOUT_EMAIL_FROM,to,subject,html})});return response.ok}
 
@@ -177,7 +181,10 @@ if(p==='/api/blogger/password'&&m==='POST'){
 }
 if(p.startsWith('/api/blogger/')){
  const blogger=await bloggerAuthorized(req,env);if(!blogger)return json({error:'Connexion blogueur requise.'},401);
- if(p==='/api/blogger/me'&&m==='GET')return json(blogger);
+ if(p==='/api/blogger/me'&&m==='GET'){const training=await bloggerTraining(env,blogger.id),permissions={};for(const key of BLOGGER_PERMISSIONS)permissions[key]=await bloggerCan(env,blogger.id,key);return json({...blogger,training,permissions})}
+ if(p==='/api/blogger/training'&&m==='GET')return json(await bloggerTraining(env,blogger.id));
+ if(p==='/api/blogger/training'&&m==='POST'){const b=await req.json().catch(()=>({})),key=clean(b.lesson_key,40);if(!TRAINING_LESSONS.includes(key))return json({error:'Étape de formation inconnue.'},400);await env.DB.prepare('INSERT OR IGNORE INTO blogger_training(blogger_id,lesson_key) VALUES(?,?)').bind(blogger.id,key).run();return json(await bloggerTraining(env,blogger.id))}
+
  const articleRoute=p.match(/^\/api\/blogger\/articles(?:\/([^/]+))?$/);
  if(articleRoute){
   const id=articleRoute[1];
@@ -196,6 +203,9 @@ if(p.startsWith('/api/blogger/')){
  }
  return json({error:'Route blogueur introuvable.'},404);
 }
+if(p==='/api/admin/bloggers/permissions'&&m==='GET'){if(!await authorized(req,env))return json({error:'Authentification requise.'},401);const id=clean(u.searchParams.get('blogger_id'),100);if(!id)return json({error:'Blogueur requis.'},400);const rows=await env.DB.prepare('SELECT permission,enabled FROM blogger_permissions WHERE blogger_id=?').bind(id).all();const values=Object.fromEntries(BLOGGER_PERMISSIONS.map(k=>[k,false]));for(const row of rows.results||[])values[row.permission]=!!row.enabled;return json(values)}
+if(p==='/api/admin/bloggers/permissions'&&m==='PUT'){if(!await authorized(req,env))return json({error:'Authentification requise.'},401);const b=await req.json().catch(()=>({})),id=clean(b.blogger_id,100);if(!id)return json({error:'Blogueur requis.'},400);const exists=await env.DB.prepare('SELECT id FROM bloggers WHERE id=?').bind(id).first();if(!exists)return json({error:'Blogueur introuvable.'},404);const statements=[];for(const key of BLOGGER_PERMISSIONS){if(typeof b.permissions?.[key]!=='boolean')continue;statements.push(env.DB.prepare('INSERT INTO blogger_permissions(blogger_id,permission,enabled,updated_at) VALUES(?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(blogger_id,permission) DO UPDATE SET enabled=excluded.enabled,updated_at=CURRENT_TIMESTAMP').bind(id,key,b.permissions[key]?1:0))}if(statements.length)await env.DB.batch(statements);return json({ok:true})}
+if(p==='/api/admin/bloggers/training'&&m==='GET'){if(!await authorized(req,env))return json({error:'Authentification requise.'},401);const rows=await env.DB.prepare("SELECT b.id,b.name,b.email,(SELECT COUNT(*) FROM blogger_training t WHERE t.blogger_id=b.id AND t.lesson_key IN ('workspace','article','word','photos','external','submit')) AS completed FROM bloggers b ORDER BY b.created_at DESC").all();return json(rows.results||[])}
 if(p==='/api/admin/blogger-applications'&&m==='GET'){if(!await authorized(req,env))return json({error:'Authentification requise.'},401);const r=await env.DB.prepare('SELECT id,name,email,phone,city,motivation,status,cv_key,created_at FROM blogger_applications ORDER BY created_at DESC').all();return json((r.results||[]).map(a=>({...a,cv_url:'/api/admin/blogger-applications/'+a.id+'/cv'})))}
 if(p==='/api/admin/bloggers'&&m==='GET'){if(!await authorized(req,env))return json({error:'Authentification requise.'},401);const r=await env.DB.prepare('SELECT id,name,email,phone,status,created_at FROM bloggers ORDER BY created_at DESC').all();return json(r.results||[])}
 const cvMatch=p.match(/^\/api\/admin\/blogger-applications\/([^/]+)\/cv$/);
