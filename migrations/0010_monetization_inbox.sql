@@ -132,7 +132,7 @@ CREATE TABLE IF NOT EXISTS blogger_payment_methods (
   blogger_id TEXT NOT NULL REFERENCES bloggers(id) ON DELETE CASCADE,
   provider TEXT NOT NULL,
   account_holder TEXT NOT NULL,
-  account_reference_encrypted TEXT NOT NULL,
+  account_reference_ciphertext TEXT NOT NULL,
   country TEXT NOT NULL DEFAULT 'CD',
   currency TEXT NOT NULL DEFAULT 'USD',
   is_default INTEGER NOT NULL DEFAULT 0,
@@ -143,7 +143,7 @@ CREATE TABLE IF NOT EXISTS blogger_payment_methods (
 CREATE TABLE IF NOT EXISTS payout_requests (
   id TEXT PRIMARY KEY,
   blogger_id TEXT NOT NULL REFERENCES bloggers(id) ON DELETE CASCADE,
-  amount REAL NOT NULL CHECK(amount>=10),
+  amount REAL NOT NULL CHECK(amount>0),
   currency TEXT NOT NULL DEFAULT 'USD',
   payment_method_id TEXT NOT NULL REFERENCES blogger_payment_methods(id),
   status TEXT NOT NULL DEFAULT 'pending',
