@@ -198,13 +198,13 @@ if(p==='/api/public/training-modules'&&m==='GET'){
  const rows=await env.DB.prepare("SELECT id,title,category,summary,media_type,created_at FROM training_modules WHERE status='published' ORDER BY published_at DESC,created_at DESC").all();
  return json((rows.results||[]).map(x=>({...x,media_url:x.media_type?'/api/public/training-media/'+x.id:''})));
 }
-const publicModule=p.match(/^\\/api\\/public\\/training-modules\\/([^/]+)$/);
+const publicModule=p.match(/^\/api\\/public\\/training-modules\\/([^/]+)$/);
 if(publicModule&&m==='GET'){
  const row=await env.DB.prepare("SELECT id,title,category,summary,body,media_key,media_type,created_at FROM training_modules WHERE id=? AND status='published'").bind(publicModule[1]).first();
  if(!row)return json({error:'Module introuvable.'},404);
  const contributions=await env.DB.prepare("SELECT contribution_type,content,created_at FROM module_contributions WHERE module_id=? AND status='approved' ORDER BY reviewed_at DESC").bind(row.id).all();return json({...row,media_url:row.media_key?'/api/public/training-media/'+row.id:'',contributions:contributions.results||[]});
 }
-const publicMedia=p.match(/^\\/api\\/public\\/training-media\\/([^/]+)$/);
+const publicMedia=p.match(/^\/api\\/public\\/training-media\\/([^/]+)$/);
 if(publicMedia&&m==='GET'){
  const row=await env.DB.prepare("SELECT media_key,media_type FROM training_modules WHERE id=? AND status='published' AND media_key<>''").bind(publicMedia[1]).first();
  if(!row)return json({error:'Fichier introuvable.'},404);
@@ -240,7 +240,7 @@ if(p==='/api/trainer/modules'&&m==='POST'){
  const id=crypto.randomUUID();try{await env.DB.prepare("INSERT INTO training_modules(id,trainer_id,title,category,summary,body,media_key,media_type,status) VALUES(?,?,?,?,?,?,?,?, 'pending')").bind(id,trainer.id,title,category,summary,body,key,mime).run()}catch(e){if(key)await env.GALLERY.delete(key).catch(()=>{});throw e}
  return json({ok:true,id,status:'pending',message:'Module transmis à l’administration pour validation.'},201);
 }
-const contributionRoute=p.match(/^\\/api\\/trainer\\/modules\\/([^/]+)\\/contributions$/);
+const contributionRoute=p.match(/^\/api\\/trainer\\/modules\\/([^/]+)\\/contributions$/);
 if(contributionRoute&&m==='POST'){
  const blogger=await bloggerAuthorized(req,env);if(!blogger)return json({error:'Connectez-vous à votre compte ActuScout pour contribuer.'},401);
  const moduleRow=await env.DB.prepare("SELECT id FROM training_modules WHERE id=? AND status='published'").bind(contributionRoute[1]).first();if(!moduleRow)return json({error:'Module introuvable.'},404);
@@ -256,13 +256,13 @@ if(p==='/api/admin/trainer-applications'&&m==='GET'){
  if(!await authorized(req,env))return json({error:'Authentification requise.'},401);
  const rows=await env.DB.prepare('SELECT id,name,email,phone,country,city,neighborhood,avenue,street,scout_group,scout_district,scout_association,scout_federation,experience,status,created_at FROM trainer_applications ORDER BY created_at DESC').all();return json((rows.results||[]).map(x=>({...x,cv_url:'/api/admin/trainer-applications/'+x.id+'/cv'})));
 }
-const trainerCv=p.match(/^\\/api\\/admin\\/trainer-applications\\/([^/]+)\\/cv$/);
+const trainerCv=p.match(/^\/api\\/admin\\/trainer-applications\\/([^/]+)\\/cv$/);
 if(trainerCv&&m==='GET'){
  if(!await authorized(req,env))return json({error:'Authentification requise.'},401);
  const a=await env.DB.prepare('SELECT scout_cv_key FROM trainer_applications WHERE id=?').bind(trainerCv[1]).first();if(!a)return json({error:'CV introuvable.'},404);
  const obj=await env.GALLERY.get(a.scout_cv_key);return obj?new Response(obj.body,{headers:{'content-type':'application/pdf','content-disposition':'inline; filename="CV-scout-confidentiel.pdf"','cache-control':'no-store','x-content-type-options':'nosniff'}}):json({error:'CV absent.'},404);
 }
-const trainerDecision=p.match(/^\\/api\\/admin\\/trainer-applications\\/([^/]+)\\/decision$/);
+const trainerDecision=p.match(/^\/api\\/admin\\/trainer-applications\\/([^/]+)\\/decision$/);
 if(trainerDecision&&m==='POST'){
  if(!await authorized(req,env))return json({error:'Authentification requise.'},401);
  const b=await req.json().catch(()=>({})),status=b.status;if(!['approved','rejected'].includes(status))return json({error:'Décision invalide.'},400);
@@ -283,7 +283,7 @@ if(p==='/api/admin/training-modules'&&m==='GET'){
  if(!await authorized(req,env))return json({error:'Authentification requise.'},401);
  const status=clean(u.searchParams.get('status'),20)||'pending';const rows=await env.DB.prepare('SELECT m.id,m.title,m.category,m.summary,m.status,m.created_at,b.name AS trainer_name FROM training_modules m JOIN trainers t ON t.id=m.trainer_id JOIN bloggers b ON b.id=t.blogger_id WHERE m.status=? ORDER BY m.created_at DESC').bind(status).all();return json(rows.results||[]);
 }
-const moduleDecision=p.match(/^\\/api\\/admin\\/training-modules\\/([^/]+)\\/decision$/);
+const moduleDecision=p.match(/^\/api\\/admin\\/training-modules\\/([^/]+)\\/decision$/);
 if(moduleDecision&&m==='POST'){
  if(!await authorized(req,env))return json({error:'Authentification requise.'},401);
  const b=await req.json().catch(()=>({})),status=b.status;if(!['published','rejected'].includes(status))return json({error:'Décision invalide.'},400);
@@ -293,7 +293,7 @@ if(p==='/api/admin/module-contributions'&&m==='GET'){
  if(!await authorized(req,env))return json({error:'Authentification requise.'},401);
  const status=clean(u.searchParams.get('status'),20)||'pending';const rows=await env.DB.prepare('SELECT c.id,c.contribution_type,c.content,c.status,c.created_at,m.title AS module_title,b.name AS contributor_name FROM module_contributions c JOIN training_modules m ON m.id=c.module_id JOIN bloggers b ON b.id=c.blogger_id WHERE c.status=? ORDER BY c.created_at DESC').bind(status).all();return json(rows.results||[]);
 }
-const contributionDecision=p.match(/^\\/api\\/admin\\/module-contributions\\/([^/]+)\\/decision$/);
+const contributionDecision=p.match(/^\/api\\/admin\\/module-contributions\\/([^/]+)\\/decision$/);
 if(contributionDecision&&m==='POST'){
  if(!await authorized(req,env))return json({error:'Authentification requise.'},401);
  const b=await req.json().catch(()=>({})),status=b.status;if(!['approved','rejected'].includes(status))return json({error:'Décision invalide.'},400);
