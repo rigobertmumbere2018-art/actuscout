@@ -108,6 +108,11 @@ function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':
 async function sendActuScoutMail(env,to,subject,html){if(!env.RESEND_API_KEY||!env.ACTUSCOUT_EMAIL_FROM)return false;const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:'Bearer '+env.RESEND_API_KEY,'content-type':'application/json'},body:JSON.stringify({from:env.ACTUSCOUT_EMAIL_FROM,to,subject,html})});return response.ok}
 
 async function api(req,env){const u=new URL(req.url),p=u.pathname,m=req.method;const gr=await googleRoutes(req,env,u);if(gr)return gr;
+if(p==='/api/admin/inbox/messages'&&m==='GET'){if(!await authorized(req,env))return json({error:'Authentification requise.'},401);const rows=await env.DB.prepare("SELECT m.id,m.blogger_id,m.subject,m.body,m.message_type,m.created_at,b.name AS blogger_name,b.email AS blogger_email,COUNT(r.id) AS read_count FROM inbox_messages m LEFT JOIN bloggers b ON b.id=m.blogger_id LEFT JOIN inbox_message_reads r ON r.message_id=m.id GROUP BY m.id ORDER BY m.created_at DESC LIMIT 300").all();return json(rows.results||[])}
+if(p==='/api/admin/inbox/messages'&&m==='POST'){if(!await authorized(req,env))return json({error:'Authentification requise.'},401);const b=await req.json().catch(()=>({})),subject=clean(b.subject,180),body=clean(b.body,10000),type=['general','performance','earning','payment','eligibility','notice'].includes(b.message_type)?b.message_type:'general';if(subject.length<2||body.length<2)return json({error:'Objet et message obligatoires.'},400);let ids=[];if(b.recipient==='all_eligible'){const q=await env.DB.prepare("SELECT id FROM bloggers WHERE status='active'").all();ids=(q.results||[]).map(x=>x.id)}else if(Array.isArray(b.blogger_ids)){ids=[...new Set(b.blogger_ids.map(x=>clean(x,100)).filter(Boolean))]}else if(b.blogger_id){ids=[clean(b.blogger_id,100)]}if(!ids.length)return json({error:'Sélectionne au moins un destinataire.'},400);const valid=await env.DB.prepare("SELECT id FROM bloggers WHERE status='active'").all(),allowed=new Set((valid.results||[]).map(x=>x.id));ids=ids.filter(id=>allowed.has(id));if(!ids.length)return json({error:'Aucun destinataire actif valide.'},400);const now= new Date().toISOString(),stmts=ids.map(id=>env.DB.prepare('INSERT INTO inbox_messages(id,blogger_id,sender_role,subject,body,message_type,created_at) VALUES(?,?,?,?,?,?,?)').bind(crypto.randomUUID(),id,'admin',subject,body,type,now));await env.DB.batch(stmts);return json({ok:true,sent:ids.length,message:'Message envoyé dans la messagerie ActuScout.'},201)}
+if(p==='/api/blogger/inbox'&&m==='GET'){const blogger=await bloggerAuthorized(req,env);if(!blogger)return json({error:'Connexion blogueur requise.'},401);const rows=await env.DB.prepare("SELECT m.id,m.subject,m.body,m.message_type,m.created_at,CASE WHEN r.message_id IS NULL THEN 0 ELSE 1 END AS is_read FROM inbox_messages m LEFT JOIN inbox_message_reads r ON r.message_id=m.id AND r.blogger_id=m.blogger_id WHERE m.blogger_id=? ORDER BY m.created_at DESC LIMIT 200").bind(blogger.id).all();return json(rows.results||[])}
+if(p==='/api/blogger/inbox/read'&&m==='POST'){const blogger=await bloggerAuthorized(req,env);if(!blogger)return json({error:'Connexion blogueur requise.'},401);const b=await req.json().catch(()=>({})),id=clean(b.message_id,100);if(!id)return json({error:'Message requis.'},400);const owned=await env.DB.prepare('SELECT id FROM inbox_messages WHERE id=? AND blogger_id=?').bind(id,blogger.id).first();if(!owned)return json({error:'Message introuvable.'},404);await env.DB.prepare('INSERT OR IGNORE INTO inbox_message_reads(message_id,blogger_id,read_at) VALUES(?,?,CURRENT_TIMESTAMP)').bind(id,blogger.id).run();return json({ok:true})}
+
 if(p==='/api/article-media'&&m==='POST'){
  const admin=await authorized(req,env),blogger=admin?null:await bloggerAuthorized(req,env);
  if(!admin&&!blogger)return json({error:'Connexion requise.'},401);if(blogger&&!(await bloggerTraining(env,blogger.id)).complete)return json({error:'Terminez la formation initiale avant de téléverser des images.'},403);
@@ -338,6 +343,58 @@ if(m==='GET'&&!id){const r=await env.DB.prepare('SELECT * FROM '+kind+' ORDER BY
 if(m==='GET'&&id){const r=await env.DB.prepare('SELECT * FROM '+kind+' WHERE id=?').bind(id).first();return r?json(r):json({error:'Introuvable.'},404)}
 if((m==='POST'&&!id)||(m==='PUT'&&id)){const b=await req.json().catch(()=>({}));for(const f of cfg.required)if(!clean(b[f],cfg.limits[f]))return json({error:'Champ obligatoire : '+f},400);if(kind==='articles'&&['pending','published'].includes(b.status)&&!/^https:\/\//i.test(clean(b.cover_url,2000)))return json({error:'Une photo de couverture valide est obligatoire avant la soumission ou la publication.'},400);const vals=await Promise.all(cfg.fields.map(async f=>f==='status'?(['draft','pending','published'].includes(b[f])?b[f]:'draft'):(f==='body'?await sanitizeArticleHtml(b[f]):clean(b[f],cfg.limits[f]))));if(m==='POST'){const newId=crypto.randomUUID(),cols=['id',...cfg.fields],marks=cols.map(()=>'?').join(',');await env.DB.prepare('INSERT INTO '+kind+'('+cols.join(',')+') VALUES('+marks+')').bind(newId,...vals).run();return json({ok:true,id:newId},201)}await env.DB.prepare('UPDATE '+kind+' SET '+cfg.fields.map(f=>f+'=?').join(',')+',updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(...vals,id).run();return json({ok:true})}
 if(m==='DELETE'&&id){await env.DB.prepare('DELETE FROM '+kind+' WHERE id=?').bind(id).run();return json({ok:true})}return json({error:'Méthode non autorisée.'},405)}
+
+function injectPublicFaq(html){
+ if(html.includes('id="actuscout-faq-widget"'))return html;
+ const widget=String.raw`<style id="actuscout-faq-style">
+#actuscout-faq-widget{position:fixed;right:22px;bottom:22px;z-index:2147483000;font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#241631}
+#actuscout-faq-toggle{display:flex;align-items:center;gap:9px;border:0;border-radius:999px;padding:14px 19px;background:#35145b;color:#fff;font-weight:700;box-shadow:0 8px 28px #1d102b40;cursor:pointer}
+#actuscout-faq-toggle:focus-visible,#actuscout-faq-widget button:focus-visible,#actuscout-faq-search:focus-visible{outline:3px solid #d5b7ff;outline-offset:3px}
+#actuscout-faq-panel{display:none;position:absolute;right:0;bottom:64px;width:min(370px,calc(100vw - 28px));max-height:min(570px,calc(100vh - 110px));overflow:hidden;background:#fff;border:1px solid #e7deed;border-radius:16px;box-shadow:0 16px 50px #1d102b35}
+#actuscout-faq-panel[aria-hidden="false"]{display:flex;flex-direction:column}
+#actuscout-faq-head{padding:17px 18px;background:#35145b;color:white;display:flex;align-items:center;justify-content:space-between;gap:12px}
+#actuscout-faq-head strong{font-size:16px}#actuscout-faq-close{background:transparent;color:white;border:0;font-size:25px;line-height:1;cursor:pointer;padding:2px 7px}
+#actuscout-faq-search{display:block;width:calc(100% - 28px);margin:13px 14px 8px;padding:11px 12px;border:1px solid #ddd3e7;border-radius:9px;font:inherit}
+#actuscout-faq-list{overflow:auto;padding:0 14px 14px}
+#actuscout-faq-list details{border-bottom:1px solid #eee8f3;padding:11px 2px}
+#actuscout-faq-list summary{font-weight:650;cursor:pointer;line-height:1.4}
+#actuscout-faq-list p{font-size:14px;line-height:1.55;color:#5d5368;margin:9px 0 2px}
+#actuscout-faq-foot{padding:12px 16px;border-top:1px solid #eee8f3;font-size:13px;color:#71677b}
+#actuscout-faq-foot a{color:#35145b;font-weight:700}
+@media(max-width:480px){#actuscout-faq-widget{right:14px;bottom:14px}#actuscout-faq-toggle{padding:13px 16px}#actuscout-faq-panel{right:-2px;width:calc(100vw - 24px);max-height:70vh}}
+</style>
+<div id="actuscout-faq-widget">
+ <section id="actuscout-faq-panel" role="dialog" aria-label="Questions fréquentes ActuScout" aria-hidden="true">
+  <header id="actuscout-faq-head"><div><strong>Centre d’aide ActuScout</strong><div style="font-size:12px;opacity:.85;margin-top:3px">Réponses aux questions fréquentes</div></div><button id="actuscout-faq-close" type="button" aria-label="Fermer">×</button></header>
+  <input id="actuscout-faq-search" type="search" placeholder="Rechercher une question…" aria-label="Rechercher dans la FAQ">
+  <div id="actuscout-faq-list">
+   <details><summary>Qu’est-ce qu’ActuScout ?</summary><p>ActuScout est une plateforme d’information consacrée au scoutisme, à ses actualités, à ses initiatives et à la vie de ses communautés.</p></details>
+   <details><summary>Comment consulter les actualités ?</summary><p>Ouvrez la rubrique Actualités depuis le menu du site. Sélectionnez un article pour lire son contenu complet et retrouver ses options de partage et d’interaction.</p></details>
+   <details><summary>Où trouver les albums photos ?</summary><p>La rubrique Albums rassemble les galeries publiées pour présenter les activités, rencontres et événements couverts par ActuScout.</p></details>
+   <details><summary>Comment devenir blogueur sur ActuScout ?</summary><p>Accédez à la page « Devenir blogueur », consultez les conditions et soumettez votre candidature à l’équipe de rédaction. L’accès à l’espace de rédaction est accordé après admission et formation initiale.</p></details>
+   <details><summary>Comment proposer un article ou une information ?</summary><p>Vous pouvez déposer une candidature comme blogueur depuis la page dédiée. Les propositions sont examinées par l’équipe éditoriale avant toute publication.</p></details>
+   <details><summary>Les articles sont-ils publiés automatiquement ?</summary><p>Non. Les contenus soumis par les blogueurs sont transmis à la rédaction et doivent être examinés et validés avant leur publication.</p></details>
+   <details><summary>Comment soutenir ActuScout ?</summary><p>Consultez la page « Faire un don » pour découvrir les moyens de soutenir les activités et le développement de la plateforme.</p></details>
+   <details><summary>Comment signaler une erreur ou contacter l’équipe ?</summary><p>Utilisez les coordonnées ou les moyens de contact présentés sur la page « Qui sommes-nous » afin de transmettre votre demande à l’équipe ActuScout.</p></details>
+  </div>
+  <footer id="actuscout-faq-foot">Vous n’avez pas trouvé votre réponse ? Consultez <a href="/qui-sommes-nous">Qui sommes-nous</a>.</footer>
+ </section>
+ <button id="actuscout-faq-toggle" type="button" aria-expanded="false" aria-controls="actuscout-faq-panel"><span aria-hidden="true">?</span> Aide &amp; FAQ</button>
+</div>
+<script id="actuscout-faq-script">
+(()=>{const root=document.getElementById('actuscout-faq-widget');if(!root||root.dataset.ready)return;root.dataset.ready='1';const panel=root.querySelector('#actuscout-faq-panel'),toggle=root.querySelector('#actuscout-faq-toggle'),close=root.querySelector('#actuscout-faq-close'),search=root.querySelector('#actuscout-faq-search'),items=[...root.querySelectorAll('#actuscout-faq-list details')];function setOpen(open){panel.setAttribute('aria-hidden',String(!open));toggle.setAttribute('aria-expanded',String(open));if(open)search.focus();else toggle.focus()}toggle.addEventListener('click',()=>setOpen(panel.getAttribute('aria-hidden')==='true'));close.addEventListener('click',()=>setOpen(false));document.addEventListener('keydown',e=>{if(e.key==='Escape'&&panel.getAttribute('aria-hidden')==='false')setOpen(false)});search.addEventListener('input',()=>{const q=search.value.trim().toLocaleLowerCase('fr');items.forEach(item=>{item.hidden=!item.textContent.toLocaleLowerCase('fr').includes(q);if(q&& !item.hidden)item.open=true})})})();
+</script>`;
+ return html.includes('</body>')?html.replace('</body>',widget+'</body>'):html+widget;
+}
+async function withPublicFaq(response){
+ if(!response||!response.ok)return response;
+ const type=response.headers.get('content-type')||'';
+ if(!type.includes('text/html'))return response;
+ const html=injectPublicFaq(await response.text());
+ const headers=new Headers(response.headers);headers.delete('content-length');
+ return new Response(html,{status:response.status,statusText:response.statusText,headers});
+}
+
 const pageRoutes={'/actualites':'/actualites.html','/actualites/':'/actualites.html','/redaction':'/editor/index.html','/redaction/':'/editor/index.html','/':'/index.html','/albums':'/albums.html','/albums/':'/albums.html','/admin':'/admin.html','/admin/':'/admin.html','/admin-blogueurs':'/admin-blogueurs.html','/devenir-blogueur':'/devenir-blogueur.html','/faire-un-don':'/faire-un-don.html','/blogueur':'/blogueur.html','/blogueur/':'/blogueur.html','/article':'/article.html','/article/':'/article.html','/qui-sommes-nous':'/qui-sommes-nous.html','/qui-sommes-nous/':'/qui-sommes-nous.html'};
 function xmlEscape(value){return String(value??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;')}
 async function sitemapResponse(env){
@@ -394,7 +451,7 @@ export default {async fetch(req,env){const u=new URL(req.url);try{if(u.pathname=
    const jsonLd=JSON.stringify(structuredData).replace(/</g,'\\u003c').replace(/>/g,'\\u003e').replace(/&/g,'\\u0026');
    const meta='<title>'+title+' | ActuScout</title><meta name="description" content="'+description+'"><link rel="canonical" href="'+canonical+'"><meta property="og:type" content="article"><meta property="og:site_name" content="ActuScout"><meta property="og:locale" content="fr_FR"><meta property="og:title" content="'+title+'"><meta property="og:description" content="'+description+'"><meta property="og:url" content="'+canonical+'">'+(image?'<meta property="og:image" content="'+escapeHtml(image)+'"><meta property="og:image:secure_url" content="'+escapeHtml(image)+'"><meta property="og:image:alt" content="'+title+'">':'')+'<meta name="twitter:card" content="'+(image?'summary_large_image':'summary')+'"><meta name="twitter:title" content="'+title+'"><meta name="twitter:description" content="'+description+'">'+(image?'<meta name="twitter:image" content="'+escapeHtml(image)+'"><meta name="twitter:image:alt" content="'+title+'">':'')+(published?'<meta property="article:published_time" content="'+published+'">':'')+(modified?'<meta property="article:modified_time" content="'+modified+'">':'')+'<script type="application/ld+json">'+jsonLd+'</script>';
    html=html.replace(/<title>[\s\S]*?<\/title>/i,'').replace('</head>',meta+'</head>');
-   return new Response(html,{status:200,headers:{'content-type':'text/html; charset=utf-8','cache-control':'public, max-age=120, s-maxage=300'}});
+   return await withPublicFaq(new Response(html,{status:200,headers:{'content-type':'text/html; charset=utf-8','cache-control':'public, max-age=120, s-maxage=300'}}));
   }
  }
-}const assetPath=pageRoutes[u.pathname];if(assetPath){const assetUrl=new URL(assetPath,u.origin);assetUrl.search=u.search;return env.ASSETS.fetch(new Request(assetUrl,req))}return env.ASSETS.fetch(req)}catch(e){return json({error:'Erreur serveur.'},500)}}};
+}const assetPath=pageRoutes[u.pathname];if(assetPath){const assetUrl=new URL(assetPath,u.origin);assetUrl.search=u.search;const assetResponse=await env.ASSETS.fetch(new Request(assetUrl,req));const privatePaths=['/admin','/admin/','/admin-blogueurs','/admin-blogueurs/','/blogueur','/blogueur/','/redaction','/redaction/'];return privatePaths.includes(u.pathname)?assetResponse:await withPublicFaq(assetResponse)}return env.ASSETS.fetch(req)}catch(e){return json({error:'Erreur serveur.'},500)}}};
