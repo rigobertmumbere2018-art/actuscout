@@ -202,7 +202,7 @@ const publicModule=p.match(/^\\/api\\/public\\/training-modules\\/([^/]+)$/);
 if(publicModule&&m==='GET'){
  const row=await env.DB.prepare("SELECT id,title,category,summary,body,media_key,media_type,created_at FROM training_modules WHERE id=? AND status='published'").bind(publicModule[1]).first();
  if(!row)return json({error:'Module introuvable.'},404);
- return json({...row,media_url:row.media_key?'/api/public/training-media/'+row.id:''});
+ const contributions=await env.DB.prepare("SELECT contribution_type,content,created_at FROM module_contributions WHERE module_id=? AND status='approved' ORDER BY reviewed_at DESC").bind(row.id).all();return json({...row,media_url:row.media_key?'/api/public/training-media/'+row.id:'',contributions:contributions.results||[]});
 }
 const publicMedia=p.match(/^\\/api\\/public\\/training-media\\/([^/]+)$/);
 if(publicMedia&&m==='GET'){
