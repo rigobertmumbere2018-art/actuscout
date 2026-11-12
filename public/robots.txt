@@ -3,6 +3,8 @@
 
 User-agent: *
 Allow: /
+Allow: /favicon.svg
+Allow: /favicon.ico
 Disallow: /admin
 Disallow: /admin/
 Disallow: /admin-blogueurs
@@ -117,6 +119,11 @@ Disallow: /redaction
 Disallow: /redaction/
 Disallow: /editor/
 Disallow: /api/
+
+User-agent: Googlebot-Image
+Allow: /
+Allow: /favicon.svg
+Allow: /favicon.ico
 
 User-agent: Google-Extended
 Allow: /

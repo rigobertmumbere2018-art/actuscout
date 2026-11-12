@@ -386,13 +386,24 @@ function injectPublicFaq(html){
 </script>`;
  return html.includes('</body>')?html.replace('</body>',widget+'</body>'):html+widget;
 }
-async function withPublicFaq(response){
+const FAVICON_LINKS='<link rel="icon" type="image/svg+xml" href="https://actuscout.com/favicon.svg"><link rel="shortcut icon" href="https://actuscout.com/favicon.ico"><link rel="apple-touch-icon" href="https://actuscout.com/favicon.svg">';
+async function withFavicon(response){
  if(!response||!response.ok)return response;
  const type=response.headers.get('content-type')||'';
  if(!type.includes('text/html'))return response;
- const html=injectPublicFaq(await response.text());
+ let html=await response.text();
+ if(!html.includes('rel="icon"')&&!html.includes("rel='icon'"))html=html.replace(/<\/head>/i,FAVICON_LINKS+'</head>');
  const headers=new Headers(response.headers);headers.delete('content-length');
  return new Response(html,{status:response.status,statusText:response.statusText,headers});
+}
+async function withPublicFaq(response){
+ const responseWithFavicon=await withFavicon(response);
+ if(!responseWithFavicon||!responseWithFavicon.ok)return responseWithFavicon;
+ const type=responseWithFavicon.headers.get('content-type')||'';
+ if(!type.includes('text/html'))return responseWithFavicon;
+ const html=injectPublicFaq(await responseWithFavicon.text());
+ const headers=new Headers(responseWithFavicon.headers);headers.delete('content-length');
+ return new Response(html,{status:responseWithFavicon.status,statusText:responseWithFavicon.statusText,headers});
 }
 
 const pageRoutes={'/actualites':'/actualites.html','/actualites/':'/actualites.html','/redaction':'/editor/index.html','/redaction/':'/editor/index.html','/':'/index.html','/albums':'/albums.html','/albums/':'/albums.html','/admin':'/admin.html','/admin/':'/admin.html','/admin-blogueurs':'/admin-blogueurs.html','/devenir-blogueur':'/devenir-blogueur.html','/faire-un-don':'/faire-un-don.html','/blogueur':'/blogueur.html','/blogueur/':'/blogueur.html','/article':'/article.html','/article/':'/article.html','/qui-sommes-nous':'/qui-sommes-nous.html','/qui-sommes-nous/':'/qui-sommes-nous.html'};
@@ -454,4 +465,4 @@ export default {async fetch(req,env){const u=new URL(req.url);try{if(u.pathname=
    return await withPublicFaq(new Response(html,{status:200,headers:{'content-type':'text/html; charset=utf-8','cache-control':'public, max-age=120, s-maxage=300'}}));
   }
  }
-}const assetPath=pageRoutes[u.pathname];if(assetPath){const assetUrl=new URL(assetPath,u.origin);assetUrl.search=u.search;const assetResponse=await env.ASSETS.fetch(new Request(assetUrl,req));const privatePaths=['/admin','/admin/','/admin-blogueurs','/admin-blogueurs/','/blogueur','/blogueur/','/redaction','/redaction/'];return privatePaths.includes(u.pathname)?assetResponse:await withPublicFaq(assetResponse)}return env.ASSETS.fetch(req)}catch(e){return json({error:'Erreur serveur.'},500)}}};
+}if(u.pathname==='/favicon.ico'&&req.method==='GET'){const icon=await env.ASSETS.fetch(new URL('/favicon.svg',u.origin));if(!icon.ok)return new Response('Not Found',{status:404});return new Response(icon.body,{status:200,headers:{'content-type':'image/svg+xml; charset=utf-8','cache-control':'public, max-age=86400','x-content-type-options':'nosniff'}})}const assetPath=pageRoutes[u.pathname];if(assetPath){const assetUrl=new URL(assetPath,u.origin);assetUrl.search=u.search;const assetResponse=await env.ASSETS.fetch(new Request(assetUrl,req));const privatePaths=['/admin','/admin/','/admin-blogueurs','/admin-blogueurs/','/blogueur','/blogueur/','/redaction','/redaction/'];return privatePaths.includes(u.pathname)?await withFavicon(assetResponse):await withPublicFaq(assetResponse)}return env.ASSETS.fetch(req)}catch(e){return json({error:'Erreur serveur.'},500)}}};
