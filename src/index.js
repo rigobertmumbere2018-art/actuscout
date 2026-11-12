@@ -175,6 +175,131 @@ if(p==='/api/blogger/apply'&&m==='POST'){
  let saved;try{saved=await env.DB.prepare("INSERT INTO blogger_applications(id,name,email,phone,city,motivation,cv_key,status) SELECT ?,?,?,?,?,?,?,'pending' WHERE NOT EXISTS(SELECT 1 FROM blogger_applications WHERE email=? COLLATE NOCASE AND status='pending') AND NOT EXISTS(SELECT 1 FROM bloggers WHERE email=? COLLATE NOCASE)").bind(id,name,email,phone,city,motivation,key,email,email).run()}catch(error){await env.GALLERY.delete(key).catch(()=>{});throw error}if(!saved.meta?.changes){await env.GALLERY.delete(key);const account=await env.DB.prepare('SELECT status FROM bloggers WHERE email=? COLLATE NOCASE').bind(email).first();return json({error:account?(account.status==='active'?'Un compte blogueur existe déjà avec cette adresse. Connecte-toi à ton espace blogueur.':'Cette adresse est déjà associée à un compte blogueur suspendu. Contacte la rédaction ActuScout.'):'Une candidature en attente existe déjà pour cette adresse.'},409)}
  return json({ok:true,message:'Candidature reçue. Elle sera examinée par la rédaction ActuScout.'},201)
 }
+
+if(p==='/api/trainer/apply'&&m==='POST'){
+ const f=await req.formData(),name=clean(f.get('name'),160),email=clean(f.get('email'),200).toLowerCase(),phone=clean(f.get('phone'),60);
+ const fields=['country','city','neighborhood','avenue','street','scout_group','scout_district','scout_association','scout_federation'];
+ const values=fields.map(k=>clean(f.get(k),160)),experience=clean(f.get('experience'),5000),file=f.get('cv');
+ if(!name||!email||!phone||values.some(v=>!v)||!experience||!file||!file.size)return json({error:'Tous les champs et le CV scout sont obligatoires.'},400);
+ if(!/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(email))return json({error:'Adresse e-mail invalide.'},400);
+ if(file.type!=='application/pdf'||file.size>3*1024*1024||await file.slice(0,5).text()!=='%PDF-')return json({error:'Le CV scout doit être un PDF valide de 3 Mo maximum.'},415);
+ if(!env.GALLERY)return json({error:'Stockage indisponible.'},503);
+ const existing=await env.DB.prepare("SELECT id FROM bloggers WHERE email=? COLLATE NOCASE").bind(email).first();
+ if(existing)return json({error:'Cette adresse possède déjà un compte ActuScout. Connectez-vous ou contactez l’administration.'},409);
+ const pending=await env.DB.prepare("SELECT id FROM trainer_applications WHERE email=? COLLATE NOCASE AND status='pending'").bind(email).first();
+ if(pending)return json({error:'Une candidature est déjà en attente pour cette adresse.'},409);
+ const id=crypto.randomUUID(),key='trainer-cv/'+id+'.pdf';
+ await env.GALLERY.put(key,await file.arrayBuffer(),{httpMetadata:{contentType:'application/pdf'}});
+ try{await env.DB.prepare("INSERT INTO trainer_applications(id,name,email,phone,country,city,neighborhood,avenue,street,scout_group,scout_district,scout_association,scout_federation,scout_cv_key,experience,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending')").bind(id,name,email,phone,...values,key,experience).run()}
+ catch(e){await env.GALLERY.delete(key).catch(()=>{});throw e}
+ return json({ok:true,message:'Candidature envoyée. Elle sera examinée par l’administration ActuScout.'},201);
+}
+if(p==='/api/public/training-modules'&&m==='GET'){
+ const rows=await env.DB.prepare("SELECT id,title,category,summary,media_type,created_at FROM training_modules WHERE status='published' ORDER BY published_at DESC,created_at DESC").all();
+ return json((rows.results||[]).map(x=>({...x,media_url:x.media_type?'/api/public/training-media/'+x.id:''})));
+}
+const publicModule=p.match(/^\\/api\\/public\\/training-modules\\/([^/]+)$/);
+if(publicModule&&m==='GET'){
+ const row=await env.DB.prepare("SELECT id,title,category,summary,body,media_key,media_type,created_at FROM training_modules WHERE id=? AND status='published'").bind(publicModule[1]).first();
+ if(!row)return json({error:'Module introuvable.'},404);
+ return json({...row,media_url:row.media_key?'/api/public/training-media/'+row.id:''});
+}
+const publicMedia=p.match(/^\\/api\\/public\\/training-media\\/([^/]+)$/);
+if(publicMedia&&m==='GET'){
+ const row=await env.DB.prepare("SELECT media_key,media_type FROM training_modules WHERE id=? AND status='published' AND media_key<>''").bind(publicMedia[1]).first();
+ if(!row)return json({error:'Fichier introuvable.'},404);
+ const obj=await env.GALLERY.get(row.media_key);return obj?new Response(obj.body,{headers:{'content-type':row.media_type,'cache-control':'public, max-age=3600','x-content-type-options':'nosniff'}}):json({error:'Fichier absent.'},404);
+}
+if(p==='/api/trainer/me'&&m==='GET'){
+ const blogger=await bloggerAuthorized(req,env);if(!blogger)return json({error:'Connexion requise.'},401);
+ const trainer=await env.DB.prepare("SELECT id,status FROM trainers WHERE blogger_id=? AND status='approved'").bind(blogger.id).first();
+ if(!trainer)return json({error:'Votre compte ne dispose pas du statut de formateur approuvé.'},403);
+ return json({...blogger,trainer_id:trainer.id});
+}
+if(p==='/api/trainer/modules'&&m==='GET'){
+ const blogger=await bloggerAuthorized(req,env);if(!blogger)return json({error:'Connexion requise.'},401);
+ const trainer=await env.DB.prepare("SELECT id FROM trainers WHERE blogger_id=? AND status='approved'").bind(blogger.id).first();if(!trainer)return json({error:'Formateur approuvé requis.'},403);
+ const rows=await env.DB.prepare('SELECT id,title,category,summary,status,created_at FROM training_modules WHERE trainer_id=? ORDER BY created_at DESC').bind(trainer.id).all();return json(rows.results||[]);
+}
+if(p==='/api/trainer/modules'&&m==='POST'){
+ const blogger=await bloggerAuthorized(req,env);if(!blogger)return json({error:'Connexion requise.'},401);
+ const trainer=await env.DB.prepare("SELECT id FROM trainers WHERE blogger_id=? AND status='approved'").bind(blogger.id).first();if(!trainer)return json({error:'Seuls les formateurs approuvés peuvent soumettre un module.'},403);
+ const f=await req.formData(),title=clean(f.get('title'),220),category=clean(f.get('category'),120),summary=clean(f.get('summary'),1000),body=await sanitizeArticleHtml(f.get('body'));
+ if(!title||!body.replace(/<[^>]*>/g,'').trim())return json({error:'Titre et contenu obligatoires.'},400);
+ const file=f.get('media');let key='',mime='';
+ if(file&&file.size){
+  if(file.size>3*1024*1024)return json({error:'Le fichier ne peut pas dépasser 3 Mo.'},413);
+  mime=file.type||'';
+  if(mime==='application/pdf'){if(await file.slice(0,5).text()!=='%PDF-')return json({error:'Signature PDF invalide.'},415)}
+  else if(mime.startsWith('image/')){const head=new Uint8Array(await file.slice(0,12).arrayBuffer());const png=head[0]===137&&head[1]===80&&head[2]===78&&head[3]===71;const jpg=head[0]===255&&head[1]===216;const gif=head[0]===71&&head[1]===73&&head[2]===70;const webp=String.fromCharCode(...head.slice(8,12))==='WEBP';if(!png&&!jpg&&!gif&&!webp)return json({error:'Format image non reconnu. Utilisez PNG, JPG, GIF ou WebP.'},415);mime=png?'image/png':jpg?'image/jpeg':gif?'image/gif':'image/webp'}
+  else return json({error:'Un seul média image ou PDF est accepté.'},415);
+  if(!env.GALLERY)return json({error:'Stockage indisponible.'},503);
+  const ext=mime==='application/pdf'?'pdf':mime==='image/png'?'png':mime==='image/jpeg'?'jpg':mime==='image/gif'?'gif':'webp';key='training-modules/'+crypto.randomUUID()+'.'+ext;
+  await env.GALLERY.put(key,await file.arrayBuffer(),{httpMetadata:{contentType:mime}});
+ }
+ const id=crypto.randomUUID();try{await env.DB.prepare("INSERT INTO training_modules(id,trainer_id,title,category,summary,body,media_key,media_type,status) VALUES(?,?,?,?,?,?,?,?, 'pending')").bind(id,trainer.id,title,category,summary,body,key,mime).run()}catch(e){if(key)await env.GALLERY.delete(key).catch(()=>{});throw e}
+ return json({ok:true,id,status:'pending',message:'Module transmis à l’administration pour validation.'},201);
+}
+const contributionRoute=p.match(/^\\/api\\/trainer\\/modules\\/([^/]+)\\/contributions$/);
+if(contributionRoute&&m==='POST'){
+ const blogger=await bloggerAuthorized(req,env);if(!blogger)return json({error:'Connectez-vous à votre compte ActuScout pour contribuer.'},401);
+ const moduleRow=await env.DB.prepare("SELECT id FROM training_modules WHERE id=? AND status='published'").bind(contributionRoute[1]).first();if(!moduleRow)return json({error:'Module introuvable.'},404);
+ const b=await req.json().catch(()=>({})),type=['suggestion','correction'].includes(b.contribution_type)?b.contribution_type:'suggestion',content=clean(b.content,5000);if(!content)return json({error:'Votre proposition est vide.'},400);
+ await env.DB.prepare("INSERT INTO module_contributions(id,module_id,blogger_id,contribution_type,content,status) VALUES(?,?,?,?,?,'pending')").bind(crypto.randomUUID(),moduleRow.id,blogger.id,type,content).run();
+ return json({ok:true,message:'Contribution envoyée. Elle sera publiée après validation.'},201);
+}
+if(p==='/api/trainer/contributions'&&m==='GET'){
+ const blogger=await bloggerAuthorized(req,env);if(!blogger)return json({error:'Connexion requise.'},401);
+ const rows=await env.DB.prepare('SELECT c.id,c.contribution_type,c.content,c.status,c.created_at,m.title AS module_title FROM module_contributions c JOIN training_modules m ON m.id=c.module_id WHERE c.blogger_id=? ORDER BY c.created_at DESC').bind(blogger.id).all();return json(rows.results||[]);
+}
+if(p==='/api/admin/trainer-applications'&&m==='GET'){
+ if(!await authorized(req,env))return json({error:'Authentification requise.'},401);
+ const rows=await env.DB.prepare('SELECT id,name,email,phone,country,city,neighborhood,avenue,street,scout_group,scout_district,scout_association,scout_federation,experience,status,created_at FROM trainer_applications ORDER BY created_at DESC').all();return json((rows.results||[]).map(x=>({...x,cv_url:'/api/admin/trainer-applications/'+x.id+'/cv'})));
+}
+const trainerCv=p.match(/^\\/api\\/admin\\/trainer-applications\\/([^/]+)\\/cv$/);
+if(trainerCv&&m==='GET'){
+ if(!await authorized(req,env))return json({error:'Authentification requise.'},401);
+ const a=await env.DB.prepare('SELECT scout_cv_key FROM trainer_applications WHERE id=?').bind(trainerCv[1]).first();if(!a)return json({error:'CV introuvable.'},404);
+ const obj=await env.GALLERY.get(a.scout_cv_key);return obj?new Response(obj.body,{headers:{'content-type':'application/pdf','content-disposition':'inline; filename="CV-scout-confidentiel.pdf"','cache-control':'no-store','x-content-type-options':'nosniff'}}):json({error:'CV absent.'},404);
+}
+const trainerDecision=p.match(/^\\/api\\/admin\\/trainer-applications\\/([^/]+)\\/decision$/);
+if(trainerDecision&&m==='POST'){
+ if(!await authorized(req,env))return json({error:'Authentification requise.'},401);
+ const b=await req.json().catch(()=>({})),status=b.status;if(!['approved','rejected'].includes(status))return json({error:'Décision invalide.'},400);
+ const a=await env.DB.prepare("SELECT * FROM trainer_applications WHERE id=?").bind(trainerDecision[1]).first();if(!a)return json({error:'Candidature introuvable.'},404);if(a.status!=='pending')return json({error:'Candidature déjà traitée.'},409);
+ if(status==='rejected'){await env.DB.prepare("UPDATE trainer_applications SET status='rejected',reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(a.id).run();return json({ok:true})}
+ if(!env.SESSION_SECRET)return json({error:'Configuration de session absente.'},503);
+ const existing=await env.DB.prepare('SELECT id FROM bloggers WHERE email=? COLLATE NOCASE').bind(a.email).first();if(existing)return json({error:'Un compte existe déjà avec cet e-mail. La candidature ne peut pas créer un compte en doublon.'},409);
+ const temp=crypto.randomUUID().replace(/-/g,'')+'Aa1!',bloggerId=crypto.randomUUID(),trainerId=crypto.randomUUID(),hash=await mac(env.SESSION_SECRET,temp);
+ const results=await env.DB.batch([
+  env.DB.prepare("INSERT INTO bloggers(id,name,email,phone,password_hash,status) VALUES(?,?,?,?,?,'active')").bind(bloggerId,a.name,a.email,a.phone,hash),
+  env.DB.prepare("INSERT INTO trainers(id,blogger_id,application_id,status) VALUES(?,?,?,'approved')").bind(trainerId,bloggerId,a.id),
+  env.DB.prepare("UPDATE trainer_applications SET status='approved',reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(a.id)
+ ]);
+ if(!results[0]?.meta?.changes||!results[1]?.meta?.changes||!results[2]?.meta?.changes)return json({error:'Création du compte incomplète. Vérifiez les données avant de recommencer.'},409);
+ return json({ok:true,temporaryPassword:temp,message:'Formateur approuvé et compte ActuScout créé. Transmettez le mot de passe temporaire par un canal privé.'});
+}
+if(p==='/api/admin/training-modules'&&m==='GET'){
+ if(!await authorized(req,env))return json({error:'Authentification requise.'},401);
+ const status=clean(u.searchParams.get('status'),20)||'pending';const rows=await env.DB.prepare('SELECT m.id,m.title,m.category,m.summary,m.status,m.created_at,b.name AS trainer_name FROM training_modules m JOIN trainers t ON t.id=m.trainer_id JOIN bloggers b ON b.id=t.blogger_id WHERE m.status=? ORDER BY m.created_at DESC').bind(status).all();return json(rows.results||[]);
+}
+const moduleDecision=p.match(/^\\/api\\/admin\\/training-modules\\/([^/]+)\\/decision$/);
+if(moduleDecision&&m==='POST'){
+ if(!await authorized(req,env))return json({error:'Authentification requise.'},401);
+ const b=await req.json().catch(()=>({})),status=b.status;if(!['published','rejected'].includes(status))return json({error:'Décision invalide.'},400);
+ const result=await env.DB.prepare("UPDATE training_modules SET status=?,published_at=CASE WHEN ?='published' THEN CURRENT_TIMESTAMP ELSE NULL END,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(status,status,moduleDecision[1]).run();if(!result.meta?.changes)return json({error:'Module introuvable ou déjà traité.'},404);return json({ok:true});
+}
+if(p==='/api/admin/module-contributions'&&m==='GET'){
+ if(!await authorized(req,env))return json({error:'Authentification requise.'},401);
+ const status=clean(u.searchParams.get('status'),20)||'pending';const rows=await env.DB.prepare('SELECT c.id,c.contribution_type,c.content,c.status,c.created_at,m.title AS module_title,b.name AS contributor_name FROM module_contributions c JOIN training_modules m ON m.id=c.module_id JOIN bloggers b ON b.id=c.blogger_id WHERE c.status=? ORDER BY c.created_at DESC').bind(status).all();return json(rows.results||[]);
+}
+const contributionDecision=p.match(/^\\/api\\/admin\\/module-contributions\\/([^/]+)\\/decision$/);
+if(contributionDecision&&m==='POST'){
+ if(!await authorized(req,env))return json({error:'Authentification requise.'},401);
+ const b=await req.json().catch(()=>({})),status=b.status;if(!['approved','rejected'].includes(status))return json({error:'Décision invalide.'},400);
+ const result=await env.DB.prepare("UPDATE module_contributions SET status=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(status,contributionDecision[1]).run();if(!result.meta?.changes)return json({error:'Contribution introuvable ou déjà traitée.'},404);return json({ok:true});
+}
+
 if(p==='/api/blogger/login'&&m==='POST'){const b=await req.json().catch(()=>({})),email=clean(b.email,200).toLowerCase(),password=typeof b.password==='string'?b.password.slice(0,300):'';const row=await env.DB.prepare("SELECT id,name,email,phone,status,password_hash FROM bloggers WHERE email=? AND status='active'").bind(email).first();if(!row||!env.SESSION_SECRET||await mac(env.SESSION_SECRET,password)!==row.password_hash)return json({error:'Identifiants incorrects ou compte non activé.'},401);const {password_hash,...profile}=row;return json({ok:true,blogger:profile},200,{'set-cookie':BLOG_COOKIE+'='+await makeBloggerSession(env,row.id)+'; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=28800'})}
 if(p==='/api/blogger/logout'&&m==='POST')return json({ok:true},200,{'set-cookie':BLOG_COOKIE+'=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0'});
 if(p==='/api/blogger/password'&&m==='POST'){
@@ -407,10 +532,10 @@ async function withPublicFaq(response){
  return new Response(html,{status:responseWithFavicon.status,statusText:responseWithFavicon.statusText,headers});
 }
 
-const pageRoutes={'/actualites':'/actualites.html','/actualites/':'/actualites.html','/redaction':'/editor/index.html','/redaction/':'/editor/index.html','/':'/index.html','/albums':'/albums.html','/albums/':'/albums.html','/admin':'/admin.html','/admin/':'/admin.html','/admin-blogueurs':'/admin-blogueurs.html','/devenir-blogueur':'/devenir-blogueur.html','/faire-un-don':'/faire-un-don.html','/blogueur':'/blogueur.html','/blogueur/':'/blogueur.html','/article':'/article.html','/article/':'/article.html','/qui-sommes-nous':'/qui-sommes-nous.html','/qui-sommes-nous/':'/qui-sommes-nous.html'};
+const pageRoutes={'/modules-formation':'/modules-formation.html','/modules-formation/':'/modules-formation.html','/devenir-formateur':'/devenir-formateur.html','/formateur':'/formateur.html','/module':'/module.html','/admin-formateurs':'/admin-formateurs.html', '/actualites':'/actualites.html','/actualites/':'/actualites.html','/redaction':'/editor/index.html','/redaction/':'/editor/index.html','/':'/index.html','/albums':'/albums.html','/albums/':'/albums.html','/admin':'/admin.html','/admin/':'/admin.html','/admin-blogueurs':'/admin-blogueurs.html','/devenir-blogueur':'/devenir-blogueur.html','/faire-un-don':'/faire-un-don.html','/blogueur':'/blogueur.html','/blogueur/':'/blogueur.html','/article':'/article.html','/article/':'/article.html','/qui-sommes-nous':'/qui-sommes-nous.html','/qui-sommes-nous/':'/qui-sommes-nous.html'};
 function xmlEscape(value){return String(value??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;')}
 async function sitemapResponse(env){
- const pages=['/','/actualites','/albums','/qui-sommes-nous','/devenir-blogueur','/faire-un-don'];
+ const pages=['/','/actualites','/albums','/qui-sommes-nous','/devenir-blogueur','/devenir-formateur','/modules-formation','/faire-un-don'];
  const urls=pages.map(path=>'<url><loc>https://actuscout.com'+path+'</loc></url>');
  const rows=await env.DB.prepare("SELECT id,updated_at,created_at FROM articles WHERE status='published' ORDER BY created_at DESC").all();
  for(const article of rows.results||[]){
