@@ -197,3 +197,8 @@ Disallow: /editor/
 Disallow: /api/
 
 Sitemap: https://actuscout.com/sitemap.xml
+
+Disallow: /formateur
+Disallow: /formateur/
+Disallow: /admin-formateurs
+Disallow: /admin-formateurs/
