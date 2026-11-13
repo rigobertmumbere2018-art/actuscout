@@ -221,19 +221,22 @@ if(publicMedia&&m==='GET'){
  const obj=await env.GALLERY.get(row.media_key);return obj?new Response(obj.body,{headers:{'content-type':row.media_type,'cache-control':'public, max-age=3600','x-content-type-options':'nosniff'}}):json({error:'Fichier absent.'},404);
 }
 if(p==='/api/trainer/me'&&m==='GET'){
+ if(await authorized(req,env))return json({name:'Administration ActuScout',email:'Compte administrateur',admin:true,trainer_id:null});
  const blogger=await bloggerAuthorized(req,env);if(!blogger)return json({error:'Connexion requise.'},401);
  const trainer=await env.DB.prepare("SELECT id,status FROM trainers WHERE blogger_id=? AND status='approved'").bind(blogger.id).first();
  if(!trainer)return json({error:'Votre compte ne dispose pas du statut de formateur approuvé.'},403);
- return json({...blogger,trainer_id:trainer.id});
+ return json({...blogger,trainer_id:trainer.id,admin:false});
 }
 if(p==='/api/trainer/modules'&&m==='GET'){
+ if(await authorized(req,env)){const rows=await env.DB.prepare('SELECT m.id,m.title,m.category,m.summary,m.status,m.created_at,b.name AS trainer_name FROM training_modules m JOIN trainers t ON t.id=m.trainer_id JOIN bloggers b ON b.id=t.blogger_id ORDER BY m.created_at DESC').all();return json(rows.results||[])}
  const blogger=await bloggerAuthorized(req,env);if(!blogger)return json({error:'Connexion requise.'},401);
  const trainer=await env.DB.prepare("SELECT id FROM trainers WHERE blogger_id=? AND status='approved'").bind(blogger.id).first();if(!trainer)return json({error:'Formateur approuvé requis.'},403);
  const rows=await env.DB.prepare('SELECT id,title,category,summary,status,created_at FROM training_modules WHERE trainer_id=? ORDER BY created_at DESC').bind(trainer.id).all();return json(rows.results||[]);
 }
 if(p==='/api/trainer/modules'&&m==='POST'){
- const blogger=await bloggerAuthorized(req,env);if(!blogger)return json({error:'Connexion requise.'},401);
- const trainer=await env.DB.prepare("SELECT id FROM trainers WHERE blogger_id=? AND status='approved'").bind(blogger.id).first();if(!trainer)return json({error:'Seuls les formateurs approuvés peuvent soumettre un module.'},403);
+ const isAdmin=await authorized(req,env);const blogger=isAdmin?null:await bloggerAuthorized(req,env);if(!isAdmin&&!blogger)return json({error:'Connexion requise.'},401);
+ const trainer=isAdmin?await env.DB.prepare("SELECT id FROM trainers WHERE status='approved' ORDER BY created_at ASC LIMIT 1").first():await env.DB.prepare("SELECT id FROM trainers WHERE blogger_id=? AND status='approved'").bind(blogger.id).first();
+ if(!trainer)return json({error:'Aucun formateur approuvé n’est encore disponible pour rattacher ce module.'},409);
  const f=await req.formData(),title=clean(f.get('title'),220),category=clean(f.get('category'),120),summary=clean(f.get('summary'),1000),body=await sanitizeArticleHtml(f.get('body'));
  if(!title||!body.replace(/<[^>]*>/g,'').trim())return json({error:'Titre et contenu obligatoires.'},400);
  const file=f.get('media');let key='',mime='';
