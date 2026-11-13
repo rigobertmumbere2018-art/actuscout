@@ -538,7 +538,7 @@ async function withPublicFaq(response){
  if(!responseWithFavicon||!responseWithFavicon.ok)return responseWithFavicon;
  const type=responseWithFavicon.headers.get('content-type')||'';
  if(!type.includes('text/html'))return responseWithFavicon;
- const html=injectPublicFaq((await responseWithFavicon.text()).replace('<a href="/blogueur.html">Espace blogueur</a>','<a href="/blogueur.html">Espace blogueur</a><a href="/formateur">Espace formateur</a>'));
+ const html=injectPublicFaq(await responseWithFavicon.text());
  const headers=new Headers(responseWithFavicon.headers);headers.delete('content-length');
  return new Response(html,{status:responseWithFavicon.status,statusText:responseWithFavicon.statusText,headers});
 }
