@@ -613,7 +613,6 @@ export default {async fetch(req,env){const u=new URL(req.url);let prettyArticleP
  const id=u.searchParams.get('id');
  const article=await env.DB.prepare("SELECT id,title,category,excerpt,cover_url,author,created_at,updated_at,original_published_at,original_updated_at FROM articles WHERE id=? AND status='published'").bind(id).first();
  if(article){
-  if(!prettyArticlePath)return redirect(canonical);
   const asset=await env.ASSETS.fetch(new Request(new URL('/article.html',u.origin)));
   if(asset.ok){
    let html=await asset.text();
@@ -630,6 +629,7 @@ export default {async fetch(req,env){const u=new URL(req.url);let prettyArticleP
    const title=escapeHtml(titleText);
    const description=escapeHtml(descriptionText);
    const canonical='https://actuscout.com/actualites/'+articleSlug(article.title,article.id);
+   if(!prettyArticlePath)return redirect(canonical);
    const image=article.cover_url&&(String(article.cover_url).startsWith('https://')||String(article.cover_url).startsWith('http://'))?article.cover_url:(String(article.cover_url||'').startsWith('/')&&!String(article.cover_url).startsWith('//')?new URL(article.cover_url,u.origin).href:null);
    const published=isoDate(article.original_published_at||article.created_at);
    const modified=isoDate(article.original_updated_at||article.updated_at||article.created_at);
