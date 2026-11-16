@@ -435,6 +435,18 @@ if(p==='/api/password/reset'&&m==='POST'){
  await env.DB.prepare('UPDATE password_resets SET used_at=CURRENT_TIMESTAMP WHERE id=?').bind(row.id).run();
  return json({ok:true,message:'Mot de passe réinitialisé. Tu peux maintenant te connecter.'});
 }
+if(p==='/api/admin/change-password'&&m==='POST'){
+ if(!await authorized(req,env))return json({error:'Authentification requise.'},401);
+ if(!env.SESSION_SECRET)return json({error:'Configuration de sécurité manquante.'},503);
+ const b=await req.json().catch(()=>({})),current=typeof b.current_password==='string'?b.current_password:'',next=typeof b.new_password==='string'?b.new_password:'';
+ if(next.length<12)return json({error:'Le nouveau mot de passe doit contenir au moins 12 caractères.'},400);
+ if(next===current)return json({error:'Choisis un mot de passe différent de l’ancien.'},400);
+ const override=await env.DB.prepare("SELECT password_hash FROM admin_credentials WHERE id='admin'").first();
+ const currentOk=override?await mac(env.SESSION_SECRET,current)===override.password_hash:(!!env.ADMIN_PASSWORD&&current===env.ADMIN_PASSWORD);
+ if(!currentOk)return json({error:'Le mot de passe actuel est incorrect.'},401);
+ await env.DB.prepare("INSERT INTO admin_credentials(id,password_hash,updated_at) VALUES('admin',?,CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET password_hash=excluded.password_hash,updated_at=CURRENT_TIMESTAMP").bind(await mac(env.SESSION_SECRET,next)).run();
+ return json({ok:true,message:'Mot de passe administrateur modifié. Utilise-le lors de ta prochaine connexion.'});
+}
 if(p==='/api/login'&&m==='POST'){const b=await req.json().catch(()=>({}));if(!env.SESSION_SECRET)return json({error:'Configuration de sécurité manquante.'},503);const suppliedUsername=String(b.username||'').trim(),adminEmail='rigobertmumbere2018@gmail.com';const override=await env.DB.prepare("SELECT password_hash FROM admin_credentials WHERE id='admin'").first();const passwordOk=override?await mac(env.SESSION_SECRET,String(b.password||''))===override.password_hash:(!!env.ADMIN_PASSWORD&&b.password===env.ADMIN_PASSWORD);if(!passwordOk||(!env.ADMIN_USERNAME&&!override)||(suppliedUsername!==env.ADMIN_USERNAME&&suppliedUsername.toLowerCase()!==adminEmail))return json({error:'Identifiant ou mot de passe incorrect. Utilise « Mot de passe oublié » si nécessaire.'},401);return json({ok:true},200,{'set-cookie':COOKIE+'='+await makeSession(env,env.ADMIN_USERNAME||adminEmail)+'; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=28800'})}
 if(p==='/api/logout'&&m==='POST')return json({ok:true},200,{'set-cookie':COOKIE+'=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0'});
 const ranking=u.pathname==='/api/public/rankings'&&m==='GET';
