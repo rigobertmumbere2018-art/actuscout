@@ -108,8 +108,17 @@ $('#newsletterCampaignForm').addEventListener('submit',async e=>{
  try{const data=Object.fromEntries(new FormData(f)),r=await api('/admin/newsletter/campaigns',{method:'POST',body:JSON.stringify(data)}),d=await r.json();if(!r.ok)throw Error(d.error||'Enregistrement impossible');f.reset();status.textContent=d.message||'Brouillon enregistré.';await loadNewsletter()}catch(error){status.textContent=error.message}finally{b.disabled=false}
 });
 $('#newsletterCampaignList').addEventListener('click',async e=>{
- const b=e.target.closest('[data-newsletter-send]');if(!b)return;b.disabled=true;b.textContent='Envoi du lot en cours…';
- try{const r=await api('/admin/newsletter/campaigns/'+encodeURIComponent(b.dataset.newsletterSend)+'/send',{method:'POST'}),d=await r.json();if(!r.ok)throw Error(d.error||'Envoi impossible');$('#newsletterConfigNotice').textContent=d.message||'Lot envoyé.';await loadNewsletter()}catch(error){$('#newsletterConfigNotice').textContent=error.message;await loadNewsletter()}finally{b.disabled=false}
+ const b=e.target.closest('[data-newsletter-send]');if(!b)return;b.disabled=true;
+ const url='/admin/newsletter/campaigns/'+encodeURIComponent(b.dataset.newsletterSend)+'/send';
+ try{
+  let result;
+  do{
+   b.textContent='Envoi en cours…';
+   const r=await api(url,{method:'POST'}),d=await r.json();if(!r.ok)throw Error(d.error||'Envoi impossible');
+   result=d;$('#newsletterConfigNotice').textContent=d.message||'Lot envoyé.';
+  }while(result.status==='sending'&&result.remaining>0);
+  await loadNewsletter();
+ }catch(error){$('#newsletterConfigNotice').textContent=error.message;await loadNewsletter()}finally{b.disabled=false}
 });
 
 start();
