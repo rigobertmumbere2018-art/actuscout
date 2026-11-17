@@ -144,6 +144,38 @@ if(p==='/api/newsletter/unsubscribe'&&(m==='GET'||m==='POST')){
 }
 
 
+
+if(p==='/api/chronicles/current'&&m==='GET'){
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS chronicles (id TEXT PRIMARY KEY, object_key TEXT NOT NULL, image_url TEXT NOT NULL, description TEXT NOT NULL, scheduled_at TEXT NOT NULL, created_at TEXT NOT NULL)").run();
+ const now=new Date().toISOString();
+ const row=await env.DB.prepare("SELECT id,image_url,description,scheduled_at FROM chronicles WHERE scheduled_at<=? ORDER BY scheduled_at DESC,created_at DESC LIMIT 1").bind(now).first();
+ return json(row||null,200,{'cache-control':'public, max-age=60'});
+}
+if(p==='/api/admin/chronicles'&&m==='GET'){
+ if(!await authorized(req,env))return json({error:'Authentification requise.'},401);
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS chronicles (id TEXT PRIMARY KEY, object_key TEXT NOT NULL, image_url TEXT NOT NULL, description TEXT NOT NULL, scheduled_at TEXT NOT NULL, created_at TEXT NOT NULL)").run();
+ const rows=await env.DB.prepare("SELECT id,image_url,description,scheduled_at,created_at,object_key FROM chronicles ORDER BY scheduled_at DESC,created_at DESC LIMIT 100").all();
+ return json(rows.results||[]);
+}
+if(p==='/api/admin/chronicles'&&m==='POST'){
+ if(!await authorized(req,env))return json({error:'Authentification requise.'},401);
+ if(!env.GALLERY||!env.R2_PUBLIC_BASE)return json({error:'Stockage R2 non configuré.'},503);
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS chronicles (id TEXT PRIMARY KEY, object_key TEXT NOT NULL, image_url TEXT NOT NULL, description TEXT NOT NULL, scheduled_at TEXT NOT NULL, created_at TEXT NOT NULL)").run();
+ const form=await req.formData(),file=form.get('image'),description=clean(form.get('description'),280),scheduled=clean(form.get('scheduled_at'),40);
+ if(!file||typeof file.arrayBuffer!=='function'||!file.size)return json({error:'Choisis une image.'},400);
+ if(!/^image\/(jpeg|png|webp)$/.test(file.type))return json({error:'Format accepté : JPG, PNG ou WebP.'},400);
+ if(file.size>12*1024*1024)return json({error:'Image limitée à 12 Mo.'},413);
+ if(!description)return json({error:'Ajoute une courte description.'},400);
+ const date=new Date(scheduled);if(!scheduled||!Number.isFinite(date.getTime()))return json({error:'Date de programmation invalide.'},400);
+ const id=crypto.randomUUID(),ext=file.type==='image/png'?'png':file.type==='image/webp'?'webp':'jpg',key='Ready for a beatter wordl/chroniques/'+id+'.'+ext;
+ await env.GALLERY.put(key,await file.arrayBuffer(),{httpMetadata:{contentType:file.type}});
+ const base=String(env.R2_PUBLIC_BASE).replace(/\/$/,'');
+ const url=base+'/'+key.split('/').map(encodeURIComponent).join('/');
+ try{await env.DB.prepare("INSERT INTO chronicles (id,object_key,image_url,description,scheduled_at,created_at) VALUES (?,?,?,?,?,?)").bind(id,key,url,description,date.toISOString(),new Date().toISOString()).run();}
+ catch(e){await env.GALLERY.delete(key);throw e;}
+ return json({ok:true,id,image_url:url,description,scheduled_at:date.toISOString()},201);
+}
+
 if(p==='/api/admin/documents'&&m==='GET'){if(!await authorized(req,env))return json({error:'Authentification requise.'},401);const rows=await env.DB.prepare('SELECT id,name,object_key,url,mime_type,size,created_at FROM admin_documents ORDER BY created_at DESC LIMIT 500').all();return json((rows.results||[]).map(x=>({...x,size_label:x.size>=1048576?(x.size/1048576).toFixed(1)+' Mo':Math.max(1,Math.round(x.size/1024))+' Ko'})))}
 if(p==='/api/admin/documents'&&m==='POST'){if(!await authorized(req,env))return json({error:'Authentification requise.'},401);if(!env.GALLERY||!env.R2_PUBLIC_BASE)return json({error:'Stockage R2 non configuré.'},503);const form=await req.formData(),file=form.get('file');if(!file||typeof file.arrayBuffer!=='function'||!file.size)return json({error:'Choisis un document.'},400);if(file.size>25*1024*1024)return json({error:'Document trop volumineux : limite de 25 Mo.'},413);const name=String(file.name||'document').split('/').join('_').split(String.fromCharCode(92)).join('_').slice(0,180),ext=(name.split('.').pop()||'').toLowerCase(),types={pdf:['application/pdf','application/octet-stream'],doc:['application/msword','application/octet-stream'],docx:['application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/octet-stream'],xls:['application/vnd.ms-excel','application/octet-stream'],xlsx:['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','application/octet-stream'],ppt:['application/vnd.ms-powerpoint','application/octet-stream'],pptx:['application/vnd.openxmlformats-officedocument.presentationml.presentation','application/octet-stream'],csv:['text/csv','text/plain','application/vnd.ms-excel','application/octet-stream'],txt:['text/plain','application/octet-stream']};if(!types[ext])return json({error:'Format non accepté. Utilise PDF, Word, Excel, PowerPoint, CSV ou TXT.'},415);const mime=types[ext][0],id=crypto.randomUUID(),key='documents/'+id+'.'+ext,url=(env.R2_PUBLIC_BASE.endsWith('/')?env.R2_PUBLIC_BASE.slice(0,-1):env.R2_PUBLIC_BASE)+'/'+key;await env.GALLERY.put(key,await file.arrayBuffer(),{httpMetadata:{contentType:mime,contentDisposition:'attachment; filename="'+name.split('"').join('_')+'"'}});try{await env.DB.prepare('INSERT INTO admin_documents(id,name,object_key,url,mime_type,size) VALUES(?,?,?,?,?,?)').bind(id,name,key,url,mime,file.size).run()}catch(e){await env.GALLERY.delete(key);throw e}return json({ok:true,id,name,url,message:'Document importé.'},201)}
 const adminDocument=p.match(/^\/api\/admin\/documents\/([^/]+)$/);
