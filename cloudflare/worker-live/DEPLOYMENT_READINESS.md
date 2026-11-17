@@ -65,3 +65,17 @@ La configuration Wrangler versionnée confirme les bindings D1, R2 et ASSETS, ma
 ## État de décision
 
 **NO-GO pour un déploiement Cloudflare en production à ce stade.** La sauvegarde est fiable, mais les écarts identifiés pourraient entraîner une régression si le dépôt était déployé tel quel. La préparation continue sans toucher au trafic de production.
+
+
+## Mise à jour du 17 novembre 2026 — Chroniques « Une pensée »
+
+Un correctif ciblé a été publié sur le Worker actif sans remplacer les bindings ni le stockage statique :
+- Déploiement Cloudflare : `68dc3c2d-2897-4ea4-aaef-1ba4597f0a7d`, version affectée à 100 %.
+- Le Worker conserve ses bindings existants `ASSETS`, `DB`, `GALLERY` et ses secrets.
+- La table D1 `chronicles` et son index ont été créés de façon additive.
+- L’API de programmation et de lecture des chroniques était déjà présente dans le Worker actif.
+- L’interface d’administration et l’affichage d’accueil sont désormais injectés à la réponse HTML, y compris lorsque les pages proviennent des objets R2 `site/admin.html` et `site/index.html`.
+- Les images sont conservées sous `Ready for a beatter wordl/chroniques/`.
+- Le snapshot `cloudflare/worker-live/index.js` a été actualisé après publication.
+
+Le contrôle Cloudflare confirme le déploiement à 100 %, la présence de la table D1 et la conservation des bindings. La vérification HTTP depuis l’environnement d’exécution reste bloquée par une règle réseau externe (« requests ... are not allowed ») ; elle ne constitue pas un résultat HTTP du site. La source maintenable `src/index.js` reste à réconcilier avec le bundle complet avant tout futur déploiement Wrangler.
