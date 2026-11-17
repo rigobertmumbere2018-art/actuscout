@@ -373,7 +373,1244 @@ async function api(req, env) {
   const gr = await googleRoutes(req, env, u);
   if (gr) return gr;
   if (p === "/api/newsletter/subscribe" && m === "POST") {
-    const b = await req.json().catch(() => ({})), email = clean(b.email, 254).toLowerCase(), consent = b.consent === true, trap = clea
-
---- TRUNCATED ---
-Response was ~39,562 tokens (limit: 6,000). Use more specific queries to reduce response size.
+    const b = await req.json().catch(() => ({})), email = clean(b.email, 254).toLowerCase(), consent = b.consent === true, trap = clean(b.website, 200);
+    if (trap) return json({ ok: true, message: "Merci pour votre int\xE9r\xEAt." }, 200);
+    const at = email.indexOf("@"), dot = email.lastIndexOf(".");
+    if (email.length > 254 || at <= 0 || at !== email.lastIndexOf("@") || dot < at + 2 || dot === email.length - 1 || email.split("").some((c) => c.charCodeAt(0) <= 32)) return json({ error: "Adresse e-mail invalide." }, 400);
+    if (!consent) return json({ error: "Veuillez confirmer votre accord pour recevoir la newsletter." }, 400);
+    if (!env.RESEND_API_KEY) return json({ error: "Les inscriptions \xE0 la newsletter sont momentan\xE9ment indisponibles. R\xE9essayez plus tard." }, 503);
+    const existing = await env.DB.prepare("SELECT id,status FROM newsletter_subscribers WHERE email=? COLLATE NOCASE").bind(email).first();
+    if (existing?.status === "active") return json({ ok: true, message: "Cette adresse est d\xE9j\xE0 inscrite \xE0 la newsletter." });
+    const id2 = existing?.id || crypto.randomUUID(), token = crypto.randomUUID() + "." + crypto.randomUUID(), tokenHash = await crypto.subtle.digest("SHA-256", enc.encode(token)), hash = b64(tokenHash), now = (/* @__PURE__ */ new Date()).toISOString();
+    if (existing) await env.DB.prepare("UPDATE newsletter_subscribers SET status='pending',confirmation_token_hash=?,consent_at=?,unsubscribed_at=NULL,updated_at=? WHERE id=?").bind(hash, now, now, id2).run();
+    else await env.DB.prepare("INSERT INTO newsletter_subscribers(id,email,status,confirmation_token_hash,consent_at,source,created_at,updated_at) VALUES(?,?,'pending',?,?,?, ?,?)").bind(id2, email, hash, now, "website", now, now).run();
+    const link = "https://actuscout.com/api/newsletter/confirm?token=" + encodeURIComponent(token);
+    const sent = await sendActuScoutMail(env, email, "Confirmez votre inscription \xE0 la newsletter ActuScout", '<div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;color:#241631"><h2 style="color:#35145b">Bienvenue dans la newsletter ActuScout</h2><p>Vous avez demand\xE9 \xE0 recevoir les actualit\xE9s du scoutisme africain publi\xE9es par ActuScout.</p><p>Confirmez votre adresse en cliquant sur le bouton ci-dessous :</p><p><a href="' + link + '" style="display:inline-block;background:#35145b;color:#fff;padding:13px 20px;text-decoration:none;border-radius:6px">Confirmer mon inscription</a></p><p>Si vous n\u2019\xEAtes pas \xE0 l\u2019origine de cette demande, ignorez ce message.</p></div>');
+    if (!sent) return json({ error: "Le message de confirmation n\u2019a pas pu \xEAtre envoy\xE9. R\xE9essayez plus tard." }, 502);
+    return json({ ok: true, message: "Un e-mail de confirmation vient de vous \xEAtre envoy\xE9." }, 201);
+  }
+  if (p === "/api/newsletter/confirm" && m === "GET") {
+    const token = clean(u.searchParams.get("token"), 200), hash = token ? b64(await crypto.subtle.digest("SHA-256", enc.encode(token))) : "";
+    if (!hash) return new Response("Lien de confirmation invalide.", { status: 400, headers: { "content-type": "text/plain; charset=utf-8" } });
+    const row = await env.DB.prepare("SELECT id FROM newsletter_subscribers WHERE confirmation_token_hash=? AND status='pending'").bind(hash).first();
+    if (!row) return new Response('<!doctype html><html lang="fr"><meta charset="utf-8"><title>Confirmation ActuScout</title><body style="font-family:Arial,sans-serif;padding:40px;text-align:center"><h1>Lien invalide ou d\xE9j\xE0 utilis\xE9</h1><p>Cette confirmation a d\xE9j\xE0 \xE9t\xE9 utilis\xE9e ou le lien a expir\xE9.</p><a href="https://actuscout.com">Retour \xE0 ActuScout</a></body></html>', { status: 400, headers: { "content-type": "text/html; charset=utf-8" } });
+    await env.DB.prepare("UPDATE newsletter_subscribers SET status='active',confirmation_token_hash=NULL,confirmed_at=?,updated_at=? WHERE id=?").bind((/* @__PURE__ */ new Date()).toISOString(), (/* @__PURE__ */ new Date()).toISOString(), row.id).run();
+    return new Response('<!doctype html><html lang="fr"><meta charset="utf-8"><title>Inscription confirm\xE9e | ActuScout</title><body style="font-family:Arial,sans-serif;padding:40px;text-align:center"><h1 style="color:#35145b">Inscription confirm\xE9e</h1><p>Votre adresse est maintenant inscrite \xE0 la newsletter ActuScout.</p><a href="https://actuscout.com">Retour \xE0 ActuScout</a></body></html>', { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+  }
+  if (p === "/api/newsletter/unsubscribe" && (m === "GET" || m === "POST")) {
+    const token = clean(u.searchParams.get("token"), 240), parts = token.split("."), id2 = parts[0], sig = parts[1];
+    if (!id2 || !sig || sig !== await mac(env.SESSION_SECRET || "", "newsletter-unsubscribe:" + id2)) return new Response("Lien de d\xE9sinscription invalide.", { status: 400, headers: { "content-type": "text/plain; charset=utf-8" } });
+    const result = await env.DB.prepare("UPDATE newsletter_subscribers SET status='unsubscribed',unsubscribed_at=?,updated_at=? WHERE id=?").bind((/* @__PURE__ */ new Date()).toISOString(), (/* @__PURE__ */ new Date()).toISOString(), id2).run();
+    const html = result.meta?.changes ? "<h1>D\xE9sinscription confirm\xE9e</h1><p>Vous ne recevrez plus la newsletter ActuScout.</p>" : "<h1>Adresse d\xE9j\xE0 d\xE9sinscrite</h1><p>Cette adresse ne recevra plus nos newsletters.</p>";
+    return new Response('<!doctype html><html lang="fr"><meta charset="utf-8"><title>D\xE9sinscription | ActuScout</title><body style="font-family:Arial,sans-serif;padding:40px;text-align:center">' + html + '<a href="https://actuscout.com">Retour \xE0 ActuScout</a></body></html>', { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+  }
+  if (p === "/api/chronicles/current" && m === "GET") {
+    await env.DB.prepare("CREATE TABLE IF NOT EXISTS chronicles (id TEXT PRIMARY KEY, object_key TEXT NOT NULL, image_url TEXT NOT NULL, description TEXT NOT NULL, scheduled_at TEXT NOT NULL, created_at TEXT NOT NULL)").run();
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    const row = await env.DB.prepare("SELECT id,image_url,description,scheduled_at FROM chronicles WHERE scheduled_at<=? ORDER BY scheduled_at DESC,created_at DESC LIMIT 1").bind(now).first();
+    return json(row || null, 200, { "cache-control": "public, max-age=60" });
+  }
+  if (p === "/api/admin/chronicles" && m === "GET") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    await env.DB.prepare("CREATE TABLE IF NOT EXISTS chronicles (id TEXT PRIMARY KEY, object_key TEXT NOT NULL, image_url TEXT NOT NULL, description TEXT NOT NULL, scheduled_at TEXT NOT NULL, created_at TEXT NOT NULL)").run();
+    const rows = await env.DB.prepare("SELECT id,image_url,description,scheduled_at,created_at,object_key FROM chronicles ORDER BY scheduled_at DESC,created_at DESC LIMIT 100").all();
+    return json(rows.results || []);
+  }
+  if (p === "/api/admin/chronicles" && m === "POST") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    if (!env.GALLERY || !env.R2_PUBLIC_BASE) return json({ error: "Stockage R2 non configur\xE9." }, 503);
+    await env.DB.prepare("CREATE TABLE IF NOT EXISTS chronicles (id TEXT PRIMARY KEY, object_key TEXT NOT NULL, image_url TEXT NOT NULL, description TEXT NOT NULL, scheduled_at TEXT NOT NULL, created_at TEXT NOT NULL)").run();
+    const form = await req.formData(), file = form.get("image"), description = clean(form.get("description"), 280), scheduled = clean(form.get("scheduled_at"), 40);
+    if (!file || typeof file.arrayBuffer !== "function" || !file.size) return json({ error: "Choisis une image." }, 400);
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return json({ error: "Format accept\xE9 : JPG, PNG ou WebP." }, 400);
+    if (file.size > 12 * 1024 * 1024) return json({ error: "Image limit\xE9e \xE0 12 Mo." }, 413);
+    if (!description) return json({ error: "Ajoute une courte description." }, 400);
+    const date = new Date(scheduled);
+    if (!scheduled || !Number.isFinite(date.getTime())) return json({ error: "Date de programmation invalide." }, 400);
+    const id2 = crypto.randomUUID(), ext = file.type === "image/png" ? "png" : file.type === "image/webp" ? "webp" : "jpg", key = "Ready for a beatter wordl/chroniques/" + id2 + "." + ext;
+    await env.GALLERY.put(key, await file.arrayBuffer(), { httpMetadata: { contentType: file.type } });
+    const base = String(env.R2_PUBLIC_BASE).replace(/\/$/, "");
+    const url = base + "/" + key.split("/").map(encodeURIComponent).join("/");
+    try {
+      await env.DB.prepare("INSERT INTO chronicles (id,object_key,image_url,description,scheduled_at,created_at) VALUES (?,?,?,?,?,?)").bind(id2, key, url, description, date.toISOString(), (/* @__PURE__ */ new Date()).toISOString()).run();
+    } catch (e) {
+      await env.GALLERY.delete(key);
+      throw e;
+    }
+    return json({ ok: true, id: id2, image_url: url, description, scheduled_at: date.toISOString() }, 201);
+  }
+  if (p === "/api/admin/documents" && m === "GET") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const rows = await env.DB.prepare("SELECT id,name,object_key,url,mime_type,size,created_at FROM admin_documents ORDER BY created_at DESC LIMIT 500").all();
+    return json((rows.results || []).map((x) => ({ ...x, size_label: x.size >= 1048576 ? (x.size / 1048576).toFixed(1) + " Mo" : Math.max(1, Math.round(x.size / 1024)) + " Ko" })));
+  }
+  if (p === "/api/admin/documents" && m === "POST") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    if (!env.GALLERY || !env.R2_PUBLIC_BASE) return json({ error: "Stockage R2 non configur\xE9." }, 503);
+    const form = await req.formData(), file = form.get("file");
+    if (!file || typeof file.arrayBuffer !== "function" || !file.size) return json({ error: "Choisis un document." }, 400);
+    if (file.size > 25 * 1024 * 1024) return json({ error: "Document trop volumineux : limite de 25 Mo." }, 413);
+    const name = String(file.name || "document").split("/").join("_").split(String.fromCharCode(92)).join("_").slice(0, 180), ext = (name.split(".").pop() || "").toLowerCase(), types = { pdf: ["application/pdf", "application/octet-stream"], doc: ["application/msword", "application/octet-stream"], docx: ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/octet-stream"], xls: ["application/vnd.ms-excel", "application/octet-stream"], xlsx: ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/octet-stream"], ppt: ["application/vnd.ms-powerpoint", "application/octet-stream"], pptx: ["application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/octet-stream"], csv: ["text/csv", "text/plain", "application/vnd.ms-excel", "application/octet-stream"], txt: ["text/plain", "application/octet-stream"] };
+    if (!types[ext]) return json({ error: "Format non accept\xE9. Utilise PDF, Word, Excel, PowerPoint, CSV ou TXT." }, 415);
+    const mime = types[ext][0], id2 = crypto.randomUUID(), key = "documents/" + id2 + "." + ext, url = (env.R2_PUBLIC_BASE.endsWith("/") ? env.R2_PUBLIC_BASE.slice(0, -1) : env.R2_PUBLIC_BASE) + "/" + key;
+    await env.GALLERY.put(key, await file.arrayBuffer(), { httpMetadata: { contentType: mime, contentDisposition: 'attachment; filename="' + name.split('"').join("_") + '"' } });
+    try {
+      await env.DB.prepare("INSERT INTO admin_documents(id,name,object_key,url,mime_type,size) VALUES(?,?,?,?,?,?)").bind(id2, name, key, url, mime, file.size).run();
+    } catch (e) {
+      await env.GALLERY.delete(key);
+      throw e;
+    }
+    return json({ ok: true, id: id2, name, url, message: "Document import\xE9." }, 201);
+  }
+  const adminDocument = p.match(/^\/api\/admin\/documents\/([^/]+)$/);
+  if (adminDocument && m === "DELETE") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const row = await env.DB.prepare("SELECT object_key FROM admin_documents WHERE id=?").bind(adminDocument[1]).first();
+    if (!row) return json({ error: "Document introuvable." }, 404);
+    await env.GALLERY.delete(row.object_key);
+    await env.DB.prepare("DELETE FROM admin_documents WHERE id=?").bind(adminDocument[1]).run();
+    return json({ ok: true, message: "Document supprim\xE9." });
+  }
+  if (p === "/api/admin/modules" && m === "GET") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const rows = await env.DB.prepare("SELECT id,title,description,url,icon,position,enabled,created_at,updated_at FROM admin_modules ORDER BY position ASC,created_at DESC").all();
+    return json(rows.results || []);
+  }
+  if (p === "/api/admin/modules" && m === "POST") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const b = await req.json().catch(() => ({})), title = clean(b.title, 100), description = clean(b.description, 500), url = clean(b.url, 1e3), icon = clean(b.icon, 16) || "\u25A6", position = Math.max(0, Math.min(9999, Number(b.position) || 0)), enabled = b.enabled === false ? 0 : 1;
+    if (!title || !url) return json({ error: "Le nom et l\u2019adresse du module sont obligatoires." }, 400);
+    if (!url.startsWith("/") && !/^https:\/\//i.test(url)) return json({ error: "Utilise une adresse interne commen\xE7ant par / ou une adresse HTTPS." }, 400);
+    if (url.startsWith("//") || /[\u0000-\u001f]/.test(url)) return json({ error: "Adresse du module invalide." }, 400);
+    const id2 = crypto.randomUUID();
+    await env.DB.prepare("INSERT INTO admin_modules(id,title,description,url,icon,position,enabled) VALUES(?,?,?,?,?,?,?)").bind(id2, title, description, url, icon, position, enabled).run();
+    return json({ ok: true, id: id2, message: "Module ajout\xE9." }, 201);
+  }
+  const adminModule = p.match(/^\/api\/admin\/modules\/([^/]+)$/);
+  if (adminModule && m === "PUT") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const b = await req.json().catch(() => ({})), title = clean(b.title, 100), description = clean(b.description, 500), url = clean(b.url, 1e3), icon = clean(b.icon, 16) || "\u25A6", position = Math.max(0, Math.min(9999, Number(b.position) || 0)), enabled = b.enabled === false ? 0 : 1;
+    if (!title || !url) return json({ error: "Le nom et l\u2019adresse du module sont obligatoires." }, 400);
+    if (!url.startsWith("/") && !/^https:\/\//i.test(url)) return json({ error: "Utilise une adresse interne commen\xE7ant par / ou une adresse HTTPS." }, 400);
+    if (url.startsWith("//") || /[\u0000-\u001f]/.test(url)) return json({ error: "Adresse du module invalide." }, 400);
+    const result = await env.DB.prepare("UPDATE admin_modules SET title=?,description=?,url=?,icon=?,position=?,enabled=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(title, description, url, icon, position, enabled, adminModule[1]).run();
+    return result.meta?.changes ? json({ ok: true, message: "Module mis \xE0 jour." }) : json({ error: "Module introuvable." }, 404);
+  }
+  if (adminModule && m === "DELETE") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const result = await env.DB.prepare("DELETE FROM admin_modules WHERE id=?").bind(adminModule[1]).run();
+    return result.meta?.changes ? json({ ok: true, message: "Module supprim\xE9." }) : json({ error: "Module introuvable." }, 404);
+  }
+  if (p === "/api/admin/inbox/messages" && m === "GET") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const rows = await env.DB.prepare("SELECT m.id,m.blogger_id,m.subject,m.body,m.message_type,m.created_at,b.name AS blogger_name,b.email AS blogger_email,COUNT(r.id) AS read_count FROM inbox_messages m LEFT JOIN bloggers b ON b.id=m.blogger_id LEFT JOIN inbox_message_reads r ON r.message_id=m.id GROUP BY m.id ORDER BY m.created_at DESC LIMIT 300").all();
+    return json(rows.results || []);
+  }
+  if (p === "/api/admin/inbox/messages" && m === "POST") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const b = await req.json().catch(() => ({})), subject = clean(b.subject, 180), body = clean(b.body, 1e4), type = ["general", "performance", "earning", "payment", "eligibility", "notice"].includes(b.message_type) ? b.message_type : "general";
+    if (subject.length < 2 || body.length < 2) return json({ error: "Objet et message obligatoires." }, 400);
+    let ids = [];
+    if (b.recipient === "all_eligible") {
+      const q = await env.DB.prepare("SELECT id FROM bloggers WHERE status='active'").all();
+      ids = (q.results || []).map((x) => x.id);
+    } else if (Array.isArray(b.blogger_ids)) {
+      ids = [...new Set(b.blogger_ids.map((x) => clean(x, 100)).filter(Boolean))];
+    } else if (b.blogger_id) {
+      ids = [clean(b.blogger_id, 100)];
+    }
+    if (!ids.length) return json({ error: "S\xE9lectionne au moins un destinataire." }, 400);
+    const valid = await env.DB.prepare("SELECT id FROM bloggers WHERE status='active'").all(), allowed = new Set((valid.results || []).map((x) => x.id));
+    ids = ids.filter((id2) => allowed.has(id2));
+    if (!ids.length) return json({ error: "Aucun destinataire actif valide." }, 400);
+    const now = (/* @__PURE__ */ new Date()).toISOString(), stmts = ids.map((id2) => env.DB.prepare("INSERT INTO inbox_messages(id,blogger_id,sender_role,subject,body,message_type,created_at) VALUES(?,?,?,?,?,?,?)").bind(crypto.randomUUID(), id2, "admin", subject, body, type, now));
+    await env.DB.batch(stmts);
+    return json({ ok: true, sent: ids.length, message: "Message envoy\xE9 dans la messagerie ActuScout." }, 201);
+  }
+  if (p === "/api/blogger/inbox" && m === "GET") {
+    const blogger = await bloggerAuthorized(req, env);
+    if (!blogger) return json({ error: "Connexion blogueur requise." }, 401);
+    const rows = await env.DB.prepare("SELECT m.id,m.subject,m.body,m.message_type,m.created_at,CASE WHEN r.message_id IS NULL THEN 0 ELSE 1 END AS is_read FROM inbox_messages m LEFT JOIN inbox_message_reads r ON r.message_id=m.id AND r.blogger_id=m.blogger_id WHERE m.blogger_id=? ORDER BY m.created_at DESC LIMIT 200").bind(blogger.id).all();
+    return json(rows.results || []);
+  }
+  if (p === "/api/blogger/inbox/read" && m === "POST") {
+    const blogger = await bloggerAuthorized(req, env);
+    if (!blogger) return json({ error: "Connexion blogueur requise." }, 401);
+    const b = await req.json().catch(() => ({})), id2 = clean(b.message_id, 100);
+    if (!id2) return json({ error: "Message requis." }, 400);
+    const owned = await env.DB.prepare("SELECT id FROM inbox_messages WHERE id=? AND blogger_id=?").bind(id2, blogger.id).first();
+    if (!owned) return json({ error: "Message introuvable." }, 404);
+    await env.DB.prepare("INSERT OR IGNORE INTO inbox_message_reads(message_id,blogger_id,read_at) VALUES(?,?,CURRENT_TIMESTAMP)").bind(id2, blogger.id).run();
+    return json({ ok: true });
+  }
+  if (p === "/api/article-media" && m === "POST") {
+    const admin = await authorized(req, env), blogger = admin ? null : await bloggerAuthorized(req, env);
+    if (!admin && !blogger) return json({ error: "Connexion requise." }, 401);
+    if (blogger && !(await bloggerTraining(env, blogger.id)).complete) return json({ error: "Terminez la formation initiale avant de t\xE9l\xE9verser des images." }, 403);
+    if (!env.GALLERY || !env.R2_PUBLIC_BASE) return json({ error: "Stockage R2 non configur\xE9." }, 503);
+    const form = await req.formData(), file = form.get("file"), purpose = clean(form.get("purpose"), 20);
+    if (blogger && purpose === "word" && !await bloggerCan(env, blogger.id, "import_word")) return json({ error: "L\u2019importation Word ne vous a pas \xE9t\xE9 autoris\xE9e." }, 403);
+    if (!file || typeof file.arrayBuffer !== "function" || !file.size) return json({ error: "Choisis une image \xE0 envoyer." }, 400);
+    if (file.size > 10 * 1024 * 1024) return json({ error: "Image trop volumineuse : limite de 10 Mo." }, 413);
+    const mime = (file.type || "").toLowerCase(), types = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "image/avif": "avif" };
+    if (!types[mime]) return json({ error: "Format image non accept\xE9. Utilise JPG, PNG, WebP, GIF ou AVIF." }, 415);
+    const owner = blogger ? blogger.id : "admin", key = "articles/" + owner + "/" + crypto.randomUUID() + "." + types[mime];
+    await env.GALLERY.put(key, await file.arrayBuffer(), { httpMetadata: { contentType: mime } });
+    return json({ ok: true, url: env.R2_PUBLIC_BASE.replace(/\/$/, "") + "/" + key, key }, 201);
+  }
+  if (p === "/api/blogger/articles" || p.startsWith("/api/blogger/articles/")) {
+    const blogger = await bloggerAuthorized(req, env);
+    if (!blogger) return json({ error: "Connexion blogueur requise." }, 401);
+    const idMatch = p.match(/^\/api\/blogger\/articles\/([^/]+)$/);
+    if (m === "GET" && !idMatch) {
+      const rows = await env.DB.prepare("SELECT id,title,category,excerpt,body,cover_url,author,status,created_at,updated_at FROM articles WHERE blogger_id=? ORDER BY created_at DESC").bind(blogger.id).all();
+      return json(rows.results || []);
+    }
+    if (m === "POST") {
+      if (!await bloggerCan(env, blogger.id, "write_articles")) return json({ error: "La r\xE9daction d\u2019articles ne vous a pas \xE9t\xE9 autoris\xE9e." }, 403);
+      if (!(await bloggerTraining(env, blogger.id)).complete) return json({ error: "Terminez la formation initiale avant de r\xE9diger." }, 403);
+      const b = await req.json().catch(() => ({}));
+      const title = clean(b.title, 220), body = await sanitizeArticleHtml(b.body);
+      if (!title || !body) return json({ error: "Titre et contenu obligatoires." }, 400);
+      if (["pending", "published"].includes(b.status) && !/^https:\/\//i.test(clean(b.cover_url, 2e3))) return json({ error: "Une photo de couverture valide est obligatoire avant la soumission ou la publication." }, 400);
+      if (b.status === "published") return json({ error: "Les blogueurs ne peuvent pas publier directement. Soumets l\u2019article \xE0 la r\xE9daction." }, 403);
+      const status = b.status === "pending" ? "pending" : "draft", id2 = crypto.randomUUID();
+      await env.DB.prepare("INSERT INTO articles(id,title,category,excerpt,body,cover_url,author,status,blogger_id) VALUES(?,?,?,?,?,?,?,?,?)").bind(id2, title, clean(b.category, 100), clean(b.excerpt, 1e3), body, clean(b.cover_url, 2e3), blogger.name, status, blogger.id).run();
+      return json({ ok: true, id: id2 }, 201);
+    }
+    const match2 = p.match(/^\/api\/blogger\/articles\/([^/]+)$/);
+    if (match2 && m === "GET") {
+      const row = await env.DB.prepare("SELECT id,title,category,excerpt,body,cover_url,author,status,created_at,updated_at FROM articles WHERE id=? AND blogger_id=?").bind(match2[1], blogger.id).first();
+      return row ? json(row) : json({ error: "Article introuvable." }, 404);
+    }
+    if (match2 && m === "PUT") {
+      if (!await bloggerCan(env, blogger.id, "edit_own_articles")) return json({ error: "La modification de vos articles ne vous a pas \xE9t\xE9 autoris\xE9e." }, 403);
+      if (!(await bloggerTraining(env, blogger.id)).complete) return json({ error: "Terminez la formation initiale avant de modifier un article." }, 403);
+      const b = await req.json().catch(() => ({})), title = clean(b.title, 220), body = await sanitizeArticleHtml(b.body);
+      if (!title || !body) return json({ error: "Titre et contenu obligatoires." }, 400);
+      if (b.status === "published") return json({ error: "Les blogueurs ne peuvent pas publier directement. Soumets l\u2019article \xE0 la r\xE9daction." }, 403);
+      const status = b.status === "pending" ? "pending" : "draft";
+      const result = await env.DB.prepare("UPDATE articles SET title=?,category=?,excerpt=?,body=?,cover_url=?,author=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND blogger_id=?").bind(title, clean(b.category, 100), clean(b.excerpt, 1e3), body, clean(b.cover_url, 2e3), blogger.name, status, match2[1], blogger.id).run();
+      return result.meta?.changes ? json({ ok: true }) : json({ error: "Article introuvable." }, 404);
+    }
+    return json({ error: "M\xE9thode non autoris\xE9e." }, 405);
+  }
+  if (p === "/api/upload" && m === "POST") {
+    const admin = await authorized(req, env), blogger = admin ? null : await bloggerAuthorized(req, env);
+    if (!admin && (!blogger || !await bloggerCan(env, blogger.id, "manage_albums"))) return json({ error: "La gestion des albums ne vous a pas \xE9t\xE9 autoris\xE9e." }, 403);
+    if (!env.GALLERY || !env.R2_PUBLIC_BASE) return json({ error: "Stockage R2 non configur\xE9." }, 503);
+    const form = await req.formData();
+    const file = form.get("file"), albumId = clean(form.get("album_id"), 100);
+    if (!file || typeof file.arrayBuffer !== "function" || !file.size) return json({ error: "Choisis un fichier \xE0 envoyer." }, 400);
+    if (file.size > 10 * 1024 * 1024) return json({ error: "Fichier trop volumineux : limite de 10 Mo." }, 413);
+    const mime = file.type || "application/octet-stream";
+    if (!mime.startsWith("image/") && !mime.startsWith("video/")) return json({ error: "Seules les images et vid\xE9os sont accept\xE9es." }, 415);
+    const album = await env.DB.prepare("SELECT id FROM albums WHERE id=?").bind(albumId).first();
+    if (!album) return json({ error: "Album introuvable." }, 404);
+    const ext = (file.name.split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 8) || "bin";
+    const key = "albums/" + albumId + "/" + crypto.randomUUID() + "." + ext;
+    await env.GALLERY.put(key, await file.arrayBuffer(), { httpMetadata: { contentType: mime } });
+    const url = env.R2_PUBLIC_BASE.replace(/\/$/, "") + "/" + key;
+    const id2 = crypto.randomUUID();
+    await env.DB.prepare("INSERT INTO album_photos(id,album_id,object_key,public_url,mime_type) VALUES(?,?,?,?,?)").bind(id2, albumId, key, url, mime).run();
+    if (mime.startsWith("image/")) await env.DB.prepare("UPDATE albums SET cover_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND (cover_url IS NULL OR cover_url='')").bind(url, albumId).run();
+    return json({ ok: true, id: id2, url, key }, 201);
+  }
+  if (p === "/api/blogger/apply" && m === "POST") {
+    const f = await req.formData(), name = clean(f.get("name"), 160), email = clean(f.get("email"), 200).toLowerCase(), phone = clean(f.get("phone"), 60), city = clean(f.get("city"), 120), motivation = clean(f.get("motivation"), 5e3), file = f.get("cv");
+    if (!name || !email || !phone || !motivation || !file || !file.size) return json({ error: "Tous les champs et le CV PDF sont obligatoires." }, 400);
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json({ error: "Adresse e-mail invalide." }, 400);
+    if (file.type !== "application/pdf" || file.size > 5 * 1024 * 1024) return json({ error: "Le CV doit \xEAtre un PDF de 5 Mo maximum." }, 400);
+    if (await file.slice(0, 5).text() !== "%PDF-") return json({ error: "Le fichier transmis ne poss\xE8de pas une signature PDF valide." }, 415);
+    const account = await env.DB.prepare("SELECT id,status FROM bloggers WHERE email=? COLLATE NOCASE").bind(email).first();
+    if (account) return json({ error: account.status === "active" ? "Un compte blogueur existe d\xE9j\xE0 avec cette adresse. Connecte-toi \xE0 ton espace blogueur." : "Cette adresse est d\xE9j\xE0 associ\xE9e \xE0 un compte blogueur suspendu. Contacte la r\xE9daction ActuScout." }, 409);
+    const duplicate = await env.DB.prepare("SELECT id FROM blogger_applications WHERE email=? COLLATE NOCASE AND status='pending'").bind(email).first();
+    if (duplicate) return json({ error: "Une candidature en attente existe d\xE9j\xE0 pour cette adresse." }, 409);
+    if (!env.GALLERY) return json({ error: "Le stockage des candidatures est temporairement indisponible." }, 503);
+    const id2 = crypto.randomUUID(), key = "candidatures/" + id2 + ".pdf";
+    await env.GALLERY.put(key, await file.arrayBuffer(), { httpMetadata: { contentType: "application/pdf" } });
+    let saved;
+    try {
+      saved = await env.DB.prepare("INSERT INTO blogger_applications(id,name,email,phone,city,motivation,cv_key,status) SELECT ?,?,?,?,?,?,?,'pending' WHERE NOT EXISTS(SELECT 1 FROM blogger_applications WHERE email=? COLLATE NOCASE AND status='pending') AND NOT EXISTS(SELECT 1 FROM bloggers WHERE email=? COLLATE NOCASE)").bind(id2, name, email, phone, city, motivation, key, email, email).run();
+    } catch (error) {
+      await env.GALLERY.delete(key).catch(() => {
+      });
+      throw error;
+    }
+    if (!saved.meta?.changes) {
+      await env.GALLERY.delete(key);
+      const account2 = await env.DB.prepare("SELECT status FROM bloggers WHERE email=? COLLATE NOCASE").bind(email).first();
+      return json({ error: account2 ? account2.status === "active" ? "Un compte blogueur existe d\xE9j\xE0 avec cette adresse. Connecte-toi \xE0 ton espace blogueur." : "Cette adresse est d\xE9j\xE0 associ\xE9e \xE0 un compte blogueur suspendu. Contacte la r\xE9daction ActuScout." : "Une candidature en attente existe d\xE9j\xE0 pour cette adresse." }, 409);
+    }
+    return json({ ok: true, message: "Candidature re\xE7ue. Elle sera examin\xE9e par la r\xE9daction ActuScout." }, 201);
+  }
+  if (p === "/api/trainer/apply" && m === "POST") {
+    const f = await req.formData(), name = clean(f.get("name"), 160), email = clean(f.get("email"), 200).toLowerCase(), phone = clean(f.get("phone"), 60);
+    const fields = ["country", "city", "neighborhood", "avenue", "street", "scout_group", "scout_district", "scout_association", "scout_federation"];
+    const values = fields.map((k) => clean(f.get(k), 160)), experience = clean(f.get("experience"), 5e3), file = f.get("cv");
+    if (!name || !email || !phone || values.some((v) => !v) || !experience || !file || !file.size) return json({ error: "Tous les champs et le CV scout sont obligatoires." }, 400);
+    if (!/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(email)) return json({ error: "Adresse e-mail invalide." }, 400);
+    if (file.type !== "application/pdf" || file.size > 3 * 1024 * 1024 || await file.slice(0, 5).text() !== "%PDF-") return json({ error: "Le CV scout doit \xEAtre un PDF valide de 3 Mo maximum." }, 415);
+    if (!env.GALLERY) return json({ error: "Stockage indisponible." }, 503);
+    const existing = await env.DB.prepare("SELECT id FROM bloggers WHERE email=? COLLATE NOCASE").bind(email).first();
+    if (existing) return json({ error: "Cette adresse poss\xE8de d\xE9j\xE0 un compte ActuScout. Connectez-vous ou contactez l\u2019administration." }, 409);
+    const pending = await env.DB.prepare("SELECT id FROM trainer_applications WHERE email=? COLLATE NOCASE AND status='pending'").bind(email).first();
+    if (pending) return json({ error: "Une candidature est d\xE9j\xE0 en attente pour cette adresse." }, 409);
+    const id2 = crypto.randomUUID(), key = "trainer-cv/" + id2 + ".pdf";
+    await env.GALLERY.put(key, await file.arrayBuffer(), { httpMetadata: { contentType: "application/pdf" } });
+    try {
+      await env.DB.prepare("INSERT INTO trainer_applications(id,name,email,phone,country,city,neighborhood,avenue,street,scout_group,scout_district,scout_association,scout_federation,scout_cv_key,experience,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending')").bind(id2, name, email, phone, ...values, key, experience).run();
+    } catch (e) {
+      await env.GALLERY.delete(key).catch(() => {
+      });
+      throw e;
+    }
+    return json({ ok: true, message: "Candidature envoy\xE9e. Elle sera examin\xE9e par l\u2019administration ActuScout." }, 201);
+  }
+  if (p === "/api/public/training-modules" && m === "GET") {
+    const rows = await env.DB.prepare("SELECT id,title,category,summary,media_type,created_at FROM training_modules WHERE status='published' ORDER BY published_at DESC,created_at DESC").all();
+    return json((rows.results || []).map((x) => ({ ...x, media_url: x.media_type ? "/api/public/training-media/" + x.id : "" })));
+  }
+  const publicModule = p.match(/^\/api\/public\/training-modules\/([^/]+)$/);
+  if (publicModule && m === "GET") {
+    const row = await env.DB.prepare("SELECT id,title,category,summary,body,media_key,media_type,created_at FROM training_modules WHERE id=? AND status='published'").bind(publicModule[1]).first();
+    if (!row) return json({ error: "Module introuvable." }, 404);
+    const contributions = await env.DB.prepare("SELECT contribution_type,content,created_at FROM module_contributions WHERE module_id=? AND status='approved' ORDER BY reviewed_at DESC").bind(row.id).all();
+    return json({ ...row, media_url: row.media_key ? "/api/public/training-media/" + row.id : "", contributions: contributions.results || [] });
+  }
+  const publicMedia = p.match(/^\/api\/public\/training-media\/([^/]+)$/);
+  if (publicMedia && m === "GET") {
+    const row = await env.DB.prepare("SELECT media_key,media_type FROM training_modules WHERE id=? AND status='published' AND media_key<>''").bind(publicMedia[1]).first();
+    if (!row) return json({ error: "Fichier introuvable." }, 404);
+    const obj = await env.GALLERY.get(row.media_key);
+    return obj ? new Response(obj.body, { headers: { "content-type": row.media_type, "cache-control": "public, max-age=3600", "x-content-type-options": "nosniff" } }) : json({ error: "Fichier absent." }, 404);
+  }
+  if (p === "/api/trainer/me" && m === "GET") {
+    if (await authorized(req, env)) return json({ name: "Administration ActuScout", email: "Compte administrateur", admin: true, trainer_id: null });
+    const blogger = await bloggerAuthorized(req, env);
+    if (!blogger) return json({ error: "Connexion requise." }, 401);
+    const trainer = await env.DB.prepare("SELECT id,status FROM trainers WHERE blogger_id=? AND status='approved'").bind(blogger.id).first();
+    if (!trainer) return json({ error: "Votre compte ne dispose pas du statut de formateur approuv\xE9." }, 403);
+    return json({ ...blogger, trainer_id: trainer.id, admin: false });
+  }
+  if (p === "/api/trainer/modules" && m === "GET") {
+    if (await authorized(req, env)) {
+      const rows2 = await env.DB.prepare("SELECT m.id,m.title,m.category,m.summary,m.status,m.created_at,b.name AS trainer_name FROM training_modules m JOIN trainers t ON t.id=m.trainer_id JOIN bloggers b ON b.id=t.blogger_id ORDER BY m.created_at DESC").all();
+      return json(rows2.results || []);
+    }
+    const blogger = await bloggerAuthorized(req, env);
+    if (!blogger) return json({ error: "Connexion requise." }, 401);
+    const trainer = await env.DB.prepare("SELECT id FROM trainers WHERE blogger_id=? AND status='approved'").bind(blogger.id).first();
+    if (!trainer) return json({ error: "Formateur approuv\xE9 requis." }, 403);
+    const rows = await env.DB.prepare("SELECT id,title,category,summary,status,created_at FROM training_modules WHERE trainer_id=? ORDER BY created_at DESC").bind(trainer.id).all();
+    return json(rows.results || []);
+  }
+  if (p === "/api/trainer/modules" && m === "POST") {
+    const isAdmin = await authorized(req, env);
+    const blogger = isAdmin ? null : await bloggerAuthorized(req, env);
+    if (!isAdmin && !blogger) return json({ error: "Connexion requise." }, 401);
+    const trainer = isAdmin ? await env.DB.prepare("SELECT id FROM trainers WHERE status='approved' ORDER BY created_at ASC LIMIT 1").first() : await env.DB.prepare("SELECT id FROM trainers WHERE blogger_id=? AND status='approved'").bind(blogger.id).first();
+    if (!trainer) return json({ error: "Aucun formateur approuv\xE9 n\u2019est encore disponible pour rattacher ce module." }, 409);
+    const f = await req.formData(), title = clean(f.get("title"), 220), category = clean(f.get("category"), 120), summary = clean(f.get("summary"), 1e3), body = await sanitizeArticleHtml(f.get("body"));
+    if (!title || !body.replace(/<[^>]*>/g, "").trim()) return json({ error: "Titre et contenu obligatoires." }, 400);
+    const file = f.get("media");
+    let key = "", mime = "";
+    if (file && file.size) {
+      if (file.size > 3 * 1024 * 1024) return json({ error: "Le fichier ne peut pas d\xE9passer 3 Mo." }, 413);
+      mime = file.type || "";
+      if (mime === "application/pdf") {
+        if (await file.slice(0, 5).text() !== "%PDF-") return json({ error: "Signature PDF invalide." }, 415);
+      } else if (mime.startsWith("image/")) {
+        const head = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+        const png = head[0] === 137 && head[1] === 80 && head[2] === 78 && head[3] === 71;
+        const jpg = head[0] === 255 && head[1] === 216;
+        const gif = head[0] === 71 && head[1] === 73 && head[2] === 70;
+        const webp = String.fromCharCode(...head.slice(8, 12)) === "WEBP";
+        if (!png && !jpg && !gif && !webp) return json({ error: "Format image non reconnu. Utilisez PNG, JPG, GIF ou WebP." }, 415);
+        mime = png ? "image/png" : jpg ? "image/jpeg" : gif ? "image/gif" : "image/webp";
+      } else return json({ error: "Un seul m\xE9dia image ou PDF est accept\xE9." }, 415);
+      if (!env.GALLERY) return json({ error: "Stockage indisponible." }, 503);
+      const ext = mime === "application/pdf" ? "pdf" : mime === "image/png" ? "png" : mime === "image/jpeg" ? "jpg" : mime === "image/gif" ? "gif" : "webp";
+      key = "training-modules/" + crypto.randomUUID() + "." + ext;
+      await env.GALLERY.put(key, await file.arrayBuffer(), { httpMetadata: { contentType: mime } });
+    }
+    const id2 = crypto.randomUUID();
+    try {
+      await env.DB.prepare("INSERT INTO training_modules(id,trainer_id,title,category,summary,body,media_key,media_type,status) VALUES(?,?,?,?,?,?,?,?, 'pending')").bind(id2, trainer.id, title, category, summary, body, key, mime).run();
+    } catch (e) {
+      if (key) await env.GALLERY.delete(key).catch(() => {
+      });
+      throw e;
+    }
+    return json({ ok: true, id: id2, status: "pending", message: "Module transmis \xE0 l\u2019administration pour validation." }, 201);
+  }
+  const contributionRoute = p.match(/^\/api\/trainer\/modules\/([^/]+)\/contributions$/);
+  if (contributionRoute && m === "POST") {
+    const blogger = await bloggerAuthorized(req, env);
+    if (!blogger) return json({ error: "Connectez-vous \xE0 votre compte ActuScout pour contribuer." }, 401);
+    const moduleRow = await env.DB.prepare("SELECT id FROM training_modules WHERE id=? AND status='published'").bind(contributionRoute[1]).first();
+    if (!moduleRow) return json({ error: "Module introuvable." }, 404);
+    const b = await req.json().catch(() => ({})), type = ["suggestion", "correction"].includes(b.contribution_type) ? b.contribution_type : "suggestion", content = clean(b.content, 5e3);
+    if (!content) return json({ error: "Votre proposition est vide." }, 400);
+    await env.DB.prepare("INSERT INTO module_contributions(id,module_id,blogger_id,contribution_type,content,status) VALUES(?,?,?,?,?,'pending')").bind(crypto.randomUUID(), moduleRow.id, blogger.id, type, content).run();
+    return json({ ok: true, message: "Contribution envoy\xE9e. Elle sera publi\xE9e apr\xE8s validation." }, 201);
+  }
+  if (p === "/api/trainer/contributions" && m === "GET") {
+    const blogger = await bloggerAuthorized(req, env);
+    if (!blogger) return json({ error: "Connexion requise." }, 401);
+    const rows = await env.DB.prepare("SELECT c.id,c.contribution_type,c.content,c.status,c.created_at,m.title AS module_title FROM module_contributions c JOIN training_modules m ON m.id=c.module_id WHERE c.blogger_id=? ORDER BY c.created_at DESC").bind(blogger.id).all();
+    return json(rows.results || []);
+  }
+  if (p === "/api/admin/trainer-applications" && m === "GET") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const rows = await env.DB.prepare("SELECT id,name,email,phone,country,city,neighborhood,avenue,street,scout_group,scout_district,scout_association,scout_federation,experience,status,created_at FROM trainer_applications ORDER BY created_at DESC").all();
+    return json((rows.results || []).map((x) => ({ ...x, cv_url: "/api/admin/trainer-applications/" + x.id + "/cv" })));
+  }
+  const trainerCv = p.match(/^\/api\/admin\/trainer-applications\/([^/]+)\/cv$/);
+  if (trainerCv && m === "GET") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const a = await env.DB.prepare("SELECT scout_cv_key FROM trainer_applications WHERE id=?").bind(trainerCv[1]).first();
+    if (!a) return json({ error: "CV introuvable." }, 404);
+    const obj = await env.GALLERY.get(a.scout_cv_key);
+    return obj ? new Response(obj.body, { headers: { "content-type": "application/pdf", "content-disposition": 'inline; filename="CV-scout-confidentiel.pdf"', "cache-control": "no-store", "x-content-type-options": "nosniff" } }) : json({ error: "CV absent." }, 404);
+  }
+  const trainerDecision = p.match(/^\/api\/admin\/trainer-applications\/([^/]+)\/decision$/);
+  if (trainerDecision && m === "POST") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const b = await req.json().catch(() => ({})), status = b.status;
+    if (!["approved", "rejected"].includes(status)) return json({ error: "D\xE9cision invalide." }, 400);
+    const a = await env.DB.prepare("SELECT * FROM trainer_applications WHERE id=?").bind(trainerDecision[1]).first();
+    if (!a) return json({ error: "Candidature introuvable." }, 404);
+    if (a.status !== "pending") return json({ error: "Candidature d\xE9j\xE0 trait\xE9e." }, 409);
+    if (status === "rejected") {
+      await env.DB.prepare("UPDATE trainer_applications SET status='rejected',reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(a.id).run();
+      return json({ ok: true });
+    }
+    if (!env.SESSION_SECRET) return json({ error: "Configuration de session absente." }, 503);
+    const existing = await env.DB.prepare("SELECT id FROM bloggers WHERE email=? COLLATE NOCASE").bind(a.email).first();
+    if (existing) return json({ error: "Un compte existe d\xE9j\xE0 avec cet e-mail. La candidature ne peut pas cr\xE9er un compte en doublon." }, 409);
+    const temp = crypto.randomUUID().replace(/-/g, "") + "Aa1!", bloggerId = crypto.randomUUID(), trainerId = crypto.randomUUID(), hash = await mac(env.SESSION_SECRET, temp);
+    const results = await env.DB.batch([
+      env.DB.prepare("INSERT INTO bloggers(id,name,email,phone,password_hash,status) VALUES(?,?,?,?,?,'active')").bind(bloggerId, a.name, a.email, a.phone, hash),
+      env.DB.prepare("INSERT INTO trainers(id,blogger_id,application_id,status) VALUES(?,?,?,'approved')").bind(trainerId, bloggerId, a.id),
+      env.DB.prepare("UPDATE trainer_applications SET status='approved',reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(a.id)
+    ]);
+    if (!results[0]?.meta?.changes || !results[1]?.meta?.changes || !results[2]?.meta?.changes) return json({ error: "Cr\xE9ation du compte incompl\xE8te. V\xE9rifiez les donn\xE9es avant de recommencer." }, 409);
+    return json({ ok: true, temporaryPassword: temp, message: "Formateur approuv\xE9 et compte ActuScout cr\xE9\xE9. Transmettez le mot de passe temporaire par un canal priv\xE9." });
+  }
+  if (p === "/api/admin/training-modules" && m === "GET") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const status = clean(u.searchParams.get("status"), 20) || "pending";
+    const rows = await env.DB.prepare("SELECT m.id,m.title,m.category,m.summary,m.status,m.created_at,b.name AS trainer_name FROM training_modules m JOIN trainers t ON t.id=m.trainer_id JOIN bloggers b ON b.id=t.blogger_id WHERE m.status=? ORDER BY m.created_at DESC").bind(status).all();
+    return json(rows.results || []);
+  }
+  const moduleDecision = p.match(/^\/api\/admin\/training-modules\/([^/]+)\/decision$/);
+  if (moduleDecision && m === "POST") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const b = await req.json().catch(() => ({})), status = b.status;
+    if (!["published", "rejected"].includes(status)) return json({ error: "D\xE9cision invalide." }, 400);
+    const result = await env.DB.prepare("UPDATE training_modules SET status=?,published_at=CASE WHEN ?='published' THEN CURRENT_TIMESTAMP ELSE NULL END,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(status, status, moduleDecision[1]).run();
+    if (!result.meta?.changes) return json({ error: "Module introuvable ou d\xE9j\xE0 trait\xE9." }, 404);
+    return json({ ok: true });
+  }
+  if (p === "/api/admin/module-contributions" && m === "GET") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const status = clean(u.searchParams.get("status"), 20) || "pending";
+    const rows = await env.DB.prepare("SELECT c.id,c.contribution_type,c.content,c.status,c.created_at,m.title AS module_title,b.name AS contributor_name FROM module_contributions c JOIN training_modules m ON m.id=c.module_id JOIN bloggers b ON b.id=c.blogger_id WHERE c.status=? ORDER BY c.created_at DESC").bind(status).all();
+    return json(rows.results || []);
+  }
+  const contributionDecision = p.match(/^\/api\/admin\/module-contributions\/([^/]+)\/decision$/);
+  if (contributionDecision && m === "POST") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const b = await req.json().catch(() => ({})), status = b.status;
+    if (!["approved", "rejected"].includes(status)) return json({ error: "D\xE9cision invalide." }, 400);
+    const result = await env.DB.prepare("UPDATE module_contributions SET status=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(status, contributionDecision[1]).run();
+    if (!result.meta?.changes) return json({ error: "Contribution introuvable ou d\xE9j\xE0 trait\xE9e." }, 404);
+    return json({ ok: true });
+  }
+  if (p === "/api/blogger/login" && m === "POST") {
+    const b = await req.json().catch(() => ({})), email = clean(b.email, 200).toLowerCase(), password = typeof b.password === "string" ? b.password.slice(0, 300) : "";
+    const row = await env.DB.prepare("SELECT id,name,email,phone,status,password_hash FROM bloggers WHERE email=? AND status='active'").bind(email).first();
+    if (!row || !env.SESSION_SECRET || await mac(env.SESSION_SECRET, password) !== row.password_hash) return json({ error: "Identifiants incorrects ou compte non activ\xE9." }, 401);
+    const { password_hash, ...profile } = row;
+    return json({ ok: true, blogger: profile }, 200, { "set-cookie": BLOG_COOKIE + "=" + await makeBloggerSession(env, row.id) + "; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=28800" });
+  }
+  if (p === "/api/blogger/logout" && m === "POST") return json({ ok: true }, 200, { "set-cookie": BLOG_COOKIE + "=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0" });
+  if (p === "/api/blogger/password" && m === "POST") {
+    const blogger = await bloggerAuthorized(req, env);
+    if (!blogger) return json({ error: "Connexion blogueur requise." }, 401);
+    const b = await req.json().catch(() => ({})), current = typeof b.current_password === "string" ? b.current_password.slice(0, 300) : "", next = typeof b.new_password === "string" ? b.new_password.slice(0, 300) : "";
+    if (next.length < 10) return json({ error: "Le nouveau mot de passe doit contenir au moins 10 caract\xE8res." }, 400);
+    const row = await env.DB.prepare("SELECT password_hash FROM bloggers WHERE id=? AND status='active'").bind(blogger.id).first();
+    if (!row || !env.SESSION_SECRET || await mac(env.SESSION_SECRET, current) !== row.password_hash) return json({ error: "Mot de passe actuel incorrect." }, 401);
+    await env.DB.prepare("UPDATE bloggers SET password_hash=? WHERE id=?").bind(await mac(env.SESSION_SECRET, next), blogger.id).run();
+    return json({ ok: true, message: "Mot de passe modifi\xE9." });
+  }
+  if (p.startsWith("/api/blogger/")) {
+    const blogger = await bloggerAuthorized(req, env);
+    if (!blogger) return json({ error: "Connexion blogueur requise." }, 401);
+    if (p === "/api/blogger/me" && m === "GET") {
+      const training = await bloggerTraining(env, blogger.id), permissions = {};
+      for (const key of BLOGGER_PERMISSIONS) permissions[key] = await bloggerCan(env, blogger.id, key);
+      return json({ ...blogger, training, permissions });
+    }
+    if (p === "/api/blogger/training" && m === "GET") return json(await bloggerTraining(env, blogger.id));
+    if (p === "/api/blogger/training" && m === "POST") {
+      const b = await req.json().catch(() => ({})), key = clean(b.lesson_key, 40);
+      if (!TRAINING_LESSONS.includes(key)) return json({ error: "\xC9tape de formation inconnue." }, 400);
+      await env.DB.prepare("INSERT OR IGNORE INTO blogger_training(blogger_id,lesson_key) VALUES(?,?)").bind(blogger.id, key).run();
+      return json(await bloggerTraining(env, blogger.id));
+    }
+    const articleRoute = p.match(/^\/api\/blogger\/articles(?:\/([^/]+))?$/);
+    if (articleRoute) {
+      const id2 = articleRoute[1];
+      if (m === "GET" && !id2) {
+        const rows = await env.DB.prepare("SELECT id,title,category,excerpt,status,created_at,updated_at FROM articles WHERE blogger_id=? ORDER BY created_at DESC").bind(blogger.id).all();
+        return json(rows.results || []);
+      }
+      if (m === "GET" && id2) {
+        const row = await env.DB.prepare("SELECT id,title,category,excerpt,body,cover_url,author,status,created_at,updated_at FROM articles WHERE id=? AND blogger_id=?").bind(id2, blogger.id).first();
+        return row ? json(row) : json({ error: "Article introuvable." }, 404);
+      }
+      if (m === "POST" || m === "PUT" && id2) {
+        if (m === "POST" && !await bloggerCan(env, blogger.id, "write_articles")) return json({ error: "La r\xE9daction d\u2019articles ne vous a pas \xE9t\xE9 autoris\xE9e." }, 403);
+        if (m === "PUT" && !await bloggerCan(env, blogger.id, "edit_own_articles")) return json({ error: "La modification de vos articles ne vous a pas \xE9t\xE9 autoris\xE9e." }, 403);
+        if (!(await bloggerTraining(env, blogger.id)).complete) return json({ error: "Terminez la formation initiale avant de r\xE9diger." }, 403);
+        const b = await req.json().catch(() => ({})), title = clean(b.title, 220), body = await sanitizeArticleHtml(b.body);
+        if (!title || !body.replace(/<[^>]*>/g, "").trim()) return json({ error: "Titre et contenu obligatoires." }, 400);
+        if (["pending", "published"].includes(b.status) && !/^https:\/\//i.test(clean(b.cover_url, 2e3))) return json({ error: "Une photo de couverture valide est obligatoire avant la soumission ou la publication." }, 400);
+        if (b.status === "published") return json({ error: "Les blogueurs ne peuvent pas publier directement. Soumets l\u2019article \xE0 la r\xE9daction." }, 403);
+        const status = b.status === "pending" ? "pending" : "draft", category = clean(b.category, 100), excerpt = clean(b.excerpt, 1e3), cover = clean(b.cover_url, 2e3);
+        if (m === "POST") {
+          const newId = crypto.randomUUID();
+          await env.DB.prepare("INSERT INTO articles(id,title,category,excerpt,body,cover_url,author,status,blogger_id) VALUES(?,?,?,?,?,?,?,?,?)").bind(newId, title, category, excerpt, body, cover, blogger.name, status, blogger.id).run();
+          return json({ ok: true, id: newId, status, message: status === "pending" ? "Article transmis \xE0 la r\xE9daction pour validation." : "Brouillon enregistr\xE9." }, 201);
+        }
+        const result = await env.DB.prepare("UPDATE articles SET title=?,category=?,excerpt=?,body=?,cover_url=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND blogger_id=?").bind(title, category, excerpt, body, cover, status, id2, blogger.id).run();
+        if (!result.meta?.changes) return json({ error: "Article introuvable ou acc\xE8s refus\xE9." }, 404);
+        return json({ ok: true, id: id2, status, message: status === "pending" ? "Article transmis \xE0 la r\xE9daction pour validation." : "Brouillon enregistr\xE9." });
+      }
+      return json({ error: "M\xE9thode non autoris\xE9e." }, 405);
+    }
+    return json({ error: "Route blogueur introuvable." }, 404);
+  }
+  if (p === "/api/admin/bloggers/permissions" && m === "GET") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const id2 = clean(u.searchParams.get("blogger_id"), 100);
+    if (!id2) return json({ error: "Blogueur requis." }, 400);
+    const rows = await env.DB.prepare("SELECT permission,enabled FROM blogger_permissions WHERE blogger_id=?").bind(id2).all();
+    const values = Object.fromEntries(BLOGGER_PERMISSIONS.map((k) => [k, false]));
+    for (const row of rows.results || []) values[row.permission] = !!row.enabled;
+    return json(values);
+  }
+  if (p === "/api/admin/bloggers/permissions" && m === "PUT") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const b = await req.json().catch(() => ({})), id2 = clean(b.blogger_id, 100);
+    if (!id2) return json({ error: "Blogueur requis." }, 400);
+    const exists = await env.DB.prepare("SELECT id FROM bloggers WHERE id=?").bind(id2).first();
+    if (!exists) return json({ error: "Blogueur introuvable." }, 404);
+    const statements = [];
+    for (const key of BLOGGER_PERMISSIONS) {
+      if (typeof b.permissions?.[key] !== "boolean") continue;
+      statements.push(env.DB.prepare("INSERT INTO blogger_permissions(blogger_id,permission,enabled,updated_at) VALUES(?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(blogger_id,permission) DO UPDATE SET enabled=excluded.enabled,updated_at=CURRENT_TIMESTAMP").bind(id2, key, b.permissions[key] ? 1 : 0));
+    }
+    if (statements.length) await env.DB.batch(statements);
+    return json({ ok: true });
+  }
+  if (p === "/api/admin/bloggers/training" && m === "GET") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const rows = await env.DB.prepare("SELECT b.id,b.name,b.email,(SELECT COUNT(*) FROM blogger_training t WHERE t.blogger_id=b.id AND t.lesson_key IN ('workspace','article','word','photos','external','submit')) AS completed FROM bloggers b ORDER BY b.created_at DESC").all();
+    return json(rows.results || []);
+  }
+  if (p === "/api/admin/blogger-applications" && m === "GET") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const r = await env.DB.prepare("SELECT id,name,email,phone,city,motivation,status,cv_key,created_at FROM blogger_applications ORDER BY created_at DESC").all();
+    return json((r.results || []).map((a) => ({ ...a, cv_url: "/api/admin/blogger-applications/" + a.id + "/cv" })));
+  }
+  if (p === "/api/admin/bloggers" && m === "GET") {
+    const admin = await authorized(req, env), blogger = admin ? null : await bloggerAuthorized(req, env);
+    if (!admin && (!blogger || !await bloggerCan(env, blogger.id, "manage_bloggers"))) return json({ error: "Permission insuffisante." }, 403);
+    const r = await env.DB.prepare("SELECT id,name,email,phone,status,created_at FROM bloggers ORDER BY created_at DESC").all();
+    return json(r.results || []);
+  }
+  const cvMatch = p.match(/^\/api\/admin\/blogger-applications\/([^/]+)\/cv$/);
+  if (cvMatch && m === "GET") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const a = await env.DB.prepare("SELECT cv_key FROM blogger_applications WHERE id=?").bind(cvMatch[1]).first();
+    if (!a) return json({ error: "CV introuvable." }, 404);
+    const obj = await env.GALLERY.get(a.cv_key);
+    return obj ? new Response(obj.body, { headers: { "content-type": "application/pdf", "content-disposition": 'inline; filename="CV-candidat.pdf"', "cache-control": "no-store" } }) : json({ error: "Fichier CV absent." }, 404);
+  }
+  const reviewMatch = p.match(/^\/api\/admin\/articles\/([^/]+)\/publish$/);
+  if (reviewMatch && m === "POST") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const article = await env.DB.prepare("SELECT cover_url FROM articles WHERE id=? AND status='pending'").bind(reviewMatch[1]).first();
+    if (!article) return json({ error: "Cet article a d\xE9j\xE0 \xE9t\xE9 trait\xE9 ou n\u2019existe plus dans les articles en attente." }, 409);
+    if (!/^https:\/\//i.test(article.cover_url || "")) return json({ error: "Publication impossible : cet article ne poss\xE8de pas de photo de couverture valide." }, 400);
+    const result = await env.DB.prepare("UPDATE articles SET status='published',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(reviewMatch[1]).run();
+    if (!result.meta?.changes) return json({ error: "Cet article a d\xE9j\xE0 \xE9t\xE9 trait\xE9 ou n\u2019existe plus dans les articles en attente." }, 409);
+    return json({ ok: true, message: "Article valid\xE9 et publi\xE9." });
+  }
+  const rejectMatch = p.match(/^\/api\/admin\/articles\/([^/]+)\/reject$/);
+  if (rejectMatch && m === "POST") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const result = await env.DB.prepare("UPDATE articles SET status='draft',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(rejectMatch[1]).run();
+    if (!result.meta?.changes) return json({ error: "Cet article a d\xE9j\xE0 \xE9t\xE9 trait\xE9 ou n\u2019existe plus dans les articles en attente." }, 409);
+    return json({ ok: true, message: "Article renvoy\xE9 en brouillon." });
+  }
+  const bloggerStatus = p.match(/^\/api\/admin\/bloggers\/([^/]+)\/status$/);
+  if (bloggerStatus && m === "POST") {
+    const admin = await authorized(req, env), blogger = admin ? null : await bloggerAuthorized(req, env);
+    if (!admin && (!blogger || !await bloggerCan(env, blogger.id, "manage_bloggers"))) return json({ error: "Permission insuffisante." }, 403);
+    const b = await req.json().catch(() => ({}));
+    if (!["active", "suspended"].includes(b.status)) return json({ error: "Statut invalide." }, 400);
+    const x = await env.DB.prepare("UPDATE bloggers SET status=? WHERE id=?").bind(b.status, bloggerStatus[1]).run();
+    if (!x.meta?.changes) return json({ error: "Compte blogueur introuvable." }, 404);
+    return json({ ok: true });
+  }
+  const appDecision = p.match(/^\/api\/admin\/blogger-applications\/([^/]+)\/decision$/);
+  if (appDecision && m === "POST") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const b = await req.json().catch(() => ({})), status = b.status;
+    if (!["accepted", "rejected"].includes(status)) return json({ error: "D\xE9cision invalide." }, 400);
+    const a = await env.DB.prepare("SELECT * FROM blogger_applications WHERE id=?").bind(appDecision[1]).first();
+    if (!a) return json({ error: "Candidature introuvable." }, 404);
+    if (a.status !== "pending") return json({ error: "Cette candidature a d\xE9j\xE0 \xE9t\xE9 trait\xE9e." }, 409);
+    if (status === "accepted" && !env.SESSION_SECRET) return json({ error: "Configuration de s\xE9curit\xE9 manquante : impossible de cr\xE9er le compte." }, 503);
+    if (status === "accepted") {
+      const temp = crypto.randomUUID().replace(/-/g, "") + "Aa1!";
+      const hash = await mac(env.SESSION_SECRET, temp);
+      const results = await env.DB.batch([env.DB.prepare("INSERT INTO bloggers(id,name,email,phone,password_hash,status,application_id) SELECT ?,?,?,?,?,'active',? WHERE EXISTS(SELECT 1 FROM blogger_applications WHERE id=? AND status='pending') AND NOT EXISTS(SELECT 1 FROM bloggers WHERE email=? COLLATE NOCASE)").bind(crypto.randomUUID(), a.name, a.email, a.phone, hash, a.id, a.id, a.email), env.DB.prepare("UPDATE blogger_applications SET status='accepted',reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending' AND EXISTS(SELECT 1 FROM bloggers WHERE application_id=? AND email=?)").bind(a.id, a.id, a.email)]);
+      if (!results[0]?.meta?.changes) {
+        const existing = await env.DB.prepare("SELECT id FROM bloggers WHERE email=?").bind(a.email).first();
+        if (existing) return json({ error: "Cette adresse e-mail est d\xE9j\xE0 associ\xE9e \xE0 un compte blogueur. Aucun mot de passe n\u2019a \xE9t\xE9 modifi\xE9." }, 409);
+        return json({ error: "Cette candidature vient d\u2019\xEAtre trait\xE9e par une autre session. Actualise la liste." }, 409);
+      }
+      if (!results[1]?.meta?.changes) return json({ error: "La cr\xE9ation du compte n\u2019a pas pu \xEAtre confirm\xE9e. R\xE9essaie apr\xE8s actualisation." }, 409);
+      const created = await env.DB.prepare("SELECT id FROM bloggers WHERE application_id=? AND email=?").bind(a.id, a.email).first();
+      if (created) {
+        await env.DB.batch([env.DB.prepare("INSERT OR IGNORE INTO blogger_permissions(blogger_id,permission,enabled) VALUES(?,?,1)").bind(created.id, "write_articles"), env.DB.prepare("INSERT OR IGNORE INTO blogger_permissions(blogger_id,permission,enabled) VALUES(?,?,1)").bind(created.id, "edit_own_articles"), env.DB.prepare("INSERT OR IGNORE INTO blogger_permissions(blogger_id,permission,enabled) VALUES(?,?,1)").bind(created.id, "import_word")]);
+      }
+      let emailSent = false;
+      try {
+        emailSent = await sendActuScoutMail(env, a.email, "Votre candidature ActuScout est accept\xE9e", "<p>Bonjour " + escapeHtml(a.name) + ',</p><p>Votre candidature a \xE9t\xE9 accept\xE9e.</p><p>Acc\xE8s \xE0 l\u2019espace blogueur : <a href="https://actuscout.rigobertmumbere2018.workers.dev/blogueur">ouvrir votre espace</a>.</p><p>Mot de passe temporaire : <b>' + escapeHtml(temp) + "</b></p><p>Connectez-vous puis modifiez imm\xE9diatement ce mot de passe depuis la rubrique S\xE9curit\xE9 du compte.</p>");
+      } catch {
+      }
+      if (emailSent) return json({ ok: true, emailSent: true, message: "Compte cr\xE9\xE9. Les identifiants ont \xE9t\xE9 envoy\xE9s \xE0 l\u2019adresse e-mail du candidat. Il devra modifier son mot de passe d\xE8s sa premi\xE8re connexion." });
+      return json({ ok: true, emailSent: false, temporaryPassword: temp, message: "Compte cr\xE9\xE9, mais l\u2019e-mail n\u2019a pas pu \xEAtre envoy\xE9. Transmets le mot de passe temporaire au candidat par un canal priv\xE9. Il devra le modifier d\xE8s sa premi\xE8re connexion." });
+    }
+    const decision = await env.DB.prepare("UPDATE blogger_applications SET status='rejected',reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(a.id).run();
+    if (!decision.meta?.changes) return json({ error: "Cette candidature vient d\u2019\xEAtre trait\xE9e par une autre session. Actualise la liste." }, 409);
+    return json({ ok: true });
+  }
+  if (p === "/api/admin/import-blogger" && m === "POST") {
+    if (!await authorized(req, env)) return json({ error: "Authentification administrateur requise." }, 401);
+    const payload = await req.json().catch(() => null);
+    if (!Array.isArray(payload) || payload.length > 500) return json({ error: "Fichier JSON invalide ou trop volumineux." }, 400);
+    let imported = 0, skipped = 0, drafts = 0, published = 0, imagesCopied = 0, imagesKept = 0, errors = [];
+    for (const item of payload) {
+      const sourceId = clean(item.blogger_post_id, 300), title = clean(item.title, 220), body = typeof item.body === "string" ? item.body.slice(0, 1e5) : "";
+      if (!sourceId || !body) {
+        skipped++;
+        errors.push({ id: sourceId || null, error: "Identifiant Blogger ou contenu manquant." });
+        continue;
+      }
+      const exists = await env.DB.prepare("SELECT id FROM articles WHERE blogger_post_id=?").bind(sourceId).first();
+      if (exists) {
+        skipped++;
+        continue;
+      }
+      const status = title ? "published" : "draft";
+      let html = body, cover = clean(item.cover_url, 2e3), urls = Array.isArray(item.image_urls) ? item.image_urls : [];
+      const unique = [...new Set(urls.filter((x) => typeof x === "string" && /^https:\/\//i.test(x)))];
+      for (let i = 0; i < unique.length; i++) {
+        const original = unique[i];
+        if (env.GALLERY && env.R2_PUBLIC_BASE) {
+          try {
+            const response = await fetch(original, { redirect: "follow" });
+            if (!response.ok) throw new Error("HTTP " + response.status);
+            const type = (response.headers.get("content-type") || "image/jpeg").split(";")[0];
+            if (!type.startsWith("image/")) throw new Error("Type m\xE9dia non image");
+            const ext = (type.split("/")[1] || "jpg").replace("jpeg", "jpg").replace(/[^a-z0-9]/gi, "").slice(0, 8) || "jpg";
+            const key = "blogger/" + encodeURIComponent(sourceId.slice(-48)) + "/" + i + "-" + crypto.randomUUID() + "." + ext;
+            await env.GALLERY.put(key, response.body, { httpMetadata: { contentType: type } });
+            const replacement = env.R2_PUBLIC_BASE.replace(/\/$/, "") + "/" + key;
+            html = html.split(original).join(replacement);
+            if (cover === original) cover = replacement;
+            imagesCopied++;
+          } catch (e) {
+            imagesKept++;
+          }
+        } else imagesKept++;
+      }
+      html = html.replace(/<\s*(script|iframe|object|embed|form|style)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, "").replace(/\s+on[a-z]+\s*=\s*(['"][\s\S]*?\1|[^\s>]+)/gi, "").replace(/\s+(href|src)\s*=\s*(['"])\s*javascript:[\s\S]*?\2/gi, "");
+      try {
+        await env.DB.prepare("INSERT INTO articles(id,title,category,excerpt,body,cover_url,author,status,created_at,updated_at,blogger_post_id,source_permalink,original_published_at,original_updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(), title, clean(item.category, 100), clean(item.excerpt, 1e3), html, cover, clean(item.author, 120) || "ActuScout", status, clean(item.original_published_at, 40) || (/* @__PURE__ */ new Date()).toISOString(), clean(item.original_updated_at, 40) || (/* @__PURE__ */ new Date()).toISOString(), sourceId, clean(item.source_permalink, 2e3), clean(item.original_published_at, 40), clean(item.original_updated_at, 40)).run();
+        imported++;
+        if (status === "published") published++;
+        else drafts++;
+      } catch (e) {
+        errors.push({ id: sourceId, error: "Insertion impossible. V\xE9rifier la migration D1 0004." });
+      }
+    }
+    return json({ ok: errors.length === 0, imported, skipped, published, drafts, imagesCopied, imagesKept, errors }, errors.length ? 207 : 200);
+  }
+  if (p === "/api/health") return json({ ok: true });
+  if (p === "/api/password/forgot" && m === "POST") {
+    const b = await req.json().catch(() => ({})), email = clean(b.email, 200).toLowerCase(), adminEmail = "rigobertmumbere2018@gmail.com";
+    if (!email || !email.includes("@")) return json({ error: "Adresse e-mail invalide." }, 400);
+    let type = "blogger", account = await env.DB.prepare("SELECT id,email FROM bloggers WHERE email=? AND status='active'").bind(email).first();
+    if (email === adminEmail) {
+      type = "admin";
+      account = { id: "admin", email: adminEmail };
+    }
+    if (account) {
+      if (!env.RESEND_API_KEY || !env.ACTUSCOUT_EMAIL_FROM) return json({ error: "La r\xE9cup\xE9ration par e-mail n\u2019est pas configur\xE9e. Contacte directement l\u2019administration ActuScout." }, 503);
+      const token = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, ""), tokenHash = await mac(env.SESSION_SECRET, token), id2 = crypto.randomUUID(), expires = Date.now() + 9e5;
+      await env.DB.prepare("INSERT INTO password_resets(id,email,user_type,token_hash,expires_at) VALUES(?,?,?,?,?)").bind(id2, email, type, tokenHash, expires).run();
+      const sent = await sendActuScoutMail(env, email, "R\xE9initialisation du mot de passe ActuScout", '<p>Voici ton code de r\xE9initialisation ActuScout :</p><p style="font-size:22px;font-weight:bold">' + token + "</p><p>Ce code expire dans 15 minutes. Ignore ce message si tu n\u2019as pas demand\xE9 cette op\xE9ration.</p>");
+      if (!sent) {
+        await env.DB.prepare("DELETE FROM password_resets WHERE id=?").bind(id2).run();
+        return json({ error: "Envoi du code impossible. V\xE9rifie la configuration e-mail." }, 503);
+      }
+    }
+    return json({ ok: true, message: "Si cette adresse correspond \xE0 un compte ActuScout, un code de r\xE9cup\xE9ration a \xE9t\xE9 envoy\xE9." });
+  }
+  if (p === "/api/password/reset" && m === "POST") {
+    const b = await req.json().catch(() => ({})), email = clean(b.email, 200).toLowerCase(), token = clean(b.token, 200), password = typeof b.password === "string" ? b.password : "";
+    if (password.length < 10) return json({ error: "Le nouveau mot de passe doit contenir au moins 10 caract\xE8res." }, 400);
+    const hash = await mac(env.SESSION_SECRET, token), row = await env.DB.prepare("SELECT * FROM password_resets WHERE email=? AND token_hash=? AND used_at IS NULL AND expires_at>? ORDER BY expires_at DESC LIMIT 1").bind(email, hash, Date.now()).first();
+    if (!row) return json({ error: "Code invalide ou expir\xE9. Demande un nouveau code." }, 400);
+    if (row.user_type === "admin") await env.DB.prepare("INSERT INTO admin_credentials(id,password_hash,updated_at) VALUES('admin',?,CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET password_hash=excluded.password_hash,updated_at=CURRENT_TIMESTAMP").bind(await mac(env.SESSION_SECRET, password)).run();
+    else await env.DB.prepare("UPDATE bloggers SET password_hash=? WHERE email=? AND status='active'").bind(await mac(env.SESSION_SECRET, password), email).run();
+    await env.DB.prepare("UPDATE password_resets SET used_at=CURRENT_TIMESTAMP WHERE id=?").bind(row.id).run();
+    return json({ ok: true, message: "Mot de passe r\xE9initialis\xE9. Tu peux maintenant te connecter." });
+  }
+  if (p === "/api/admin/change-password" && m === "POST") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    if (!env.SESSION_SECRET) return json({ error: "Configuration de s\xE9curit\xE9 manquante." }, 503);
+    const b = await req.json().catch(() => ({})), current = typeof b.current_password === "string" ? b.current_password : "", next = typeof b.new_password === "string" ? b.new_password : "";
+    if (next.length < 12) return json({ error: "Le nouveau mot de passe doit contenir au moins 12 caract\xE8res." }, 400);
+    if (next === current) return json({ error: "Choisis un mot de passe diff\xE9rent de l\u2019ancien." }, 400);
+    const override = await env.DB.prepare("SELECT password_hash FROM admin_credentials WHERE id='admin'").first();
+    const currentOk = override ? await mac(env.SESSION_SECRET, current) === override.password_hash : !!env.ADMIN_PASSWORD && current === env.ADMIN_PASSWORD;
+    if (!currentOk) return json({ error: "Le mot de passe actuel est incorrect." }, 401);
+    await env.DB.prepare("INSERT INTO admin_credentials(id,password_hash,updated_at) VALUES('admin',?,CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET password_hash=excluded.password_hash,updated_at=CURRENT_TIMESTAMP").bind(await mac(env.SESSION_SECRET, next)).run();
+    return json({ ok: true, message: "Mot de passe administrateur modifi\xE9. Utilise-le lors de ta prochaine connexion." });
+  }
+  if (p === "/api/login" && m === "POST") {
+    const b = await req.json().catch(() => ({}));
+    if (!env.SESSION_SECRET) return json({ error: "Configuration de s\xE9curit\xE9 manquante." }, 503);
+    const suppliedUsername = String(b.username || "").trim(), adminEmail = "rigobertmumbere2018@gmail.com";
+    const override = await env.DB.prepare("SELECT password_hash FROM admin_credentials WHERE id='admin'").first();
+    const passwordOk = override ? await mac(env.SESSION_SECRET, String(b.password || "")) === override.password_hash : !!env.ADMIN_PASSWORD && b.password === env.ADMIN_PASSWORD;
+    if (!passwordOk || !env.ADMIN_USERNAME && !override || suppliedUsername !== env.ADMIN_USERNAME && suppliedUsername.toLowerCase() !== adminEmail) return json({ error: "Identifiant ou mot de passe incorrect. Utilise \xAB Mot de passe oubli\xE9 \xBB si n\xE9cessaire." }, 401);
+    return json({ ok: true }, 200, { "set-cookie": COOKIE + "=" + await makeSession(env, env.ADMIN_USERNAME || adminEmail) + "; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=28800" });
+  }
+  if (p === "/api/logout" && m === "POST") return json({ ok: true }, 200, { "set-cookie": COOKIE + "=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0" });
+  const ranking = u.pathname === "/api/public/rankings" && m === "GET";
+  if (ranking) {
+    const by = ["views", "likes", "shares", "comments", "bookmarks"].includes(u.searchParams.get("by")) ? u.searchParams.get("by") : "views", limit = Math.min(20, Math.max(1, Number(u.searchParams.get("limit")) || 5));
+    const rows = await env.DB.prepare("SELECT a.id,a.title,a.category,a.cover_url,a.author,a.created_at,COALESCE(m.views,0) AS views,COALESCE(m.likes,0) AS likes,COALESCE(m.shares,0) AS shares,(SELECT COUNT(*) FROM article_comments c WHERE c.article_id=a.id AND c.status='approved') AS comments,(SELECT COUNT(*) FROM article_bookmarks b WHERE b.article_id=a.id) AS bookmarks FROM articles a LEFT JOIN article_metrics m ON m.article_id=a.id WHERE a.status='published' ORDER BY " + by + " DESC,a.created_at DESC LIMIT ?").bind(limit).all();
+    return json(rows.results || []);
+  }
+  const commentsRoute = p.match(/^\/api\/public\/articles\/([^/]+)\/comments$/);
+  if (commentsRoute) {
+    const articleId = decodeURIComponent(commentsRoute[1]), article = await env.DB.prepare("SELECT id FROM articles WHERE id=? AND status='published'").bind(articleId).first();
+    if (!article) return json({ error: "Article introuvable." }, 404);
+    if (m === "GET") {
+      const rows = await env.DB.prepare("SELECT id,author_name,content,created_at FROM article_comments WHERE article_id=? AND status='approved' ORDER BY created_at DESC LIMIT 100").bind(articleId).all();
+      return json({ comments: rows.results || [], total: (rows.results || []).length });
+    }
+    if (m === "POST") {
+      const origin = req.headers.get("Origin");
+      if (!origin || origin !== u.origin) return json({ error: "Origine de requ\xEAte non autoris\xE9e." }, 403);
+      const body = await req.json().catch(() => ({})), name = clean(body.name, 70), content = clean(body.content, 2e3);
+      if (name.length < 2 || content.length < 3) return json({ error: "Indique ton nom et un commentaire de 3 caract\xE8res minimum." }, 400);
+      if (!env.SESSION_SECRET) return json({ error: "Service momentan\xE9ment indisponible." }, 503);
+      const reader = await readerIdentity(req, env);
+      const recent = await env.DB.prepare("SELECT COUNT(*) AS n FROM article_comments WHERE article_id=? AND created_at>=datetime('now','-10 minutes') AND author_name=?").bind(articleId, name).first();
+      if ((recent?.n || 0) >= 3) return json({ error: "Tu as d\xE9j\xE0 envoy\xE9 plusieurs commentaires r\xE9cemment. R\xE9essaie plus tard." }, 429);
+      const id2 = crypto.randomUUID();
+      await env.DB.prepare("INSERT INTO article_comments(id,article_id,author_name,content,status) VALUES(?,?,?,?,'pending')").bind(id2, articleId, name, content).run();
+      return json({ ok: true, pending: true, message: "Merci. Ton commentaire sera visible apr\xE8s validation par la r\xE9daction." }, 201, reader.setCookie ? { "set-cookie": reader.setCookie } : {});
+    }
+    return json({ error: "M\xE9thode non autoris\xE9e." }, 405);
+  }
+  const adminComments = p === "/api/admin/comments";
+  if (adminComments) {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    if (m === "GET") {
+      const status = ["pending", "approved", "rejected"].includes(u.searchParams.get("status")) ? u.searchParams.get("status") : "pending";
+      const rows = await env.DB.prepare("SELECT c.id,c.article_id,c.author_name,c.content,c.status,c.created_at,a.title AS article_title FROM article_comments c LEFT JOIN articles a ON a.id=c.article_id WHERE c.status=? ORDER BY c.created_at DESC LIMIT 200").bind(status).all();
+      return json(rows.results || []);
+    }
+    return json({ error: "M\xE9thode non autoris\xE9e." }, 405);
+  }
+  const adminCommentAction = p.match(/^\/api\/admin\/comments\/([^/]+)\/(approve|reject|delete)$/);
+  if (adminCommentAction) {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    if (m !== "POST") return json({ error: "M\xE9thode non autoris\xE9e." }, 405);
+    const id2 = decodeURIComponent(adminCommentAction[1]), action = adminCommentAction[2];
+    if (action === "delete") await env.DB.prepare("DELETE FROM article_comments WHERE id=?").bind(id2).run();
+    else await env.DB.prepare("UPDATE article_comments SET status=? WHERE id=?").bind(action === "approve" ? "approved" : "rejected", id2).run();
+    return json({ ok: true });
+  }
+  const interaction = p.match(/^\/api\/public\/articles\/([^/]+)\/(metrics|view|like|share|bookmark)$/);
+  if (interaction) {
+    if (!env.SESSION_SECRET) return json({ error: "Statistiques indisponibles : configuration de s\xE9curit\xE9 manquante." }, 503);
+    const articleId = decodeURIComponent(interaction[1]), action = interaction[2];
+    if (action === "metrics" && m !== "GET" || action !== "metrics" && m !== "POST") return json({ error: "M\xE9thode non autoris\xE9e." }, 405);
+    if (action !== "metrics") {
+      const origin = req.headers.get("Origin");
+      if (!origin || origin !== u.origin) return json({ error: "Origine de requ\xEAte non autoris\xE9e." }, 403);
+    }
+    const article = await env.DB.prepare("SELECT id FROM articles WHERE id=? AND status='published'").bind(articleId).first();
+    if (!article) return json({ error: "Article introuvable." }, 404);
+    const reader = await readerIdentity(req, env), headers = reader.setCookie ? { "set-cookie": reader.setCookie } : {};
+    await env.DB.prepare("INSERT OR IGNORE INTO article_metrics(article_id) VALUES(?)").bind(articleId).run();
+    if (action === "view") {
+      const inserted = await env.DB.prepare("INSERT OR IGNORE INTO article_views(article_id,visitor_id,view_date) VALUES(?,?,date('now'))").bind(articleId, reader.id).run();
+      if (inserted.meta?.changes) await env.DB.prepare("UPDATE article_metrics SET views=views+1,updated_at=CURRENT_TIMESTAMP WHERE article_id=?").bind(articleId).run();
+    }
+    if (action === "like") {
+      const inserted = await env.DB.prepare("INSERT OR IGNORE INTO article_likes(article_id,visitor_id) VALUES(?,?)").bind(articleId, reader.id).run();
+      if (inserted.meta?.changes) await env.DB.prepare("UPDATE article_metrics SET likes=likes+1,updated_at=CURRENT_TIMESTAMP WHERE article_id=?").bind(articleId).run();
+      else {
+        const removed = await env.DB.prepare("DELETE FROM article_likes WHERE article_id=? AND visitor_id=?").bind(articleId, reader.id).run();
+        if (removed.meta?.changes) await env.DB.prepare("UPDATE article_metrics SET likes=MAX(0,likes-1),updated_at=CURRENT_TIMESTAMP WHERE article_id=?").bind(articleId).run();
+      }
+    }
+    if (action === "bookmark") {
+      const existing = await env.DB.prepare("SELECT 1 AS yes FROM article_bookmarks WHERE article_id=? AND visitor_id=?").bind(articleId, reader.id).first();
+      if (existing) await env.DB.prepare("DELETE FROM article_bookmarks WHERE article_id=? AND visitor_id=?").bind(articleId, reader.id).run();
+      else await env.DB.prepare("INSERT OR IGNORE INTO article_bookmarks(article_id,visitor_id) VALUES(?,?)").bind(articleId, reader.id).run();
+    }
+    if (action === "share") {
+      const eventId = crypto.randomUUID();
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO article_share_events(id,article_id,reader_id) VALUES(?,?,?)").bind(eventId, articleId, reader.id),
+        env.DB.prepare("UPDATE article_metrics SET shares=shares+1,updated_at=CURRENT_TIMESTAMP WHERE article_id=?").bind(articleId)
+      ]);
+    }
+    const stats = await env.DB.prepare("SELECT views,likes,shares,(SELECT COUNT(*) FROM article_comments WHERE article_id=? AND status='approved') AS comments,(SELECT COUNT(*) FROM article_bookmarks WHERE article_id=?) AS bookmarks FROM article_metrics WHERE article_id=?").bind(articleId, articleId, articleId).first();
+    const liked = !!await env.DB.prepare("SELECT 1 AS yes FROM article_likes WHERE article_id=? AND visitor_id=?").bind(articleId, reader.id).first();
+    const bookmarked = !!await env.DB.prepare("SELECT 1 AS yes FROM article_bookmarks WHERE article_id=? AND visitor_id=?").bind(articleId, reader.id).first();
+    return json({ ...stats, liked, bookmarked }, 200, headers);
+  }
+  if (p === "/api/public/albums" && m === "GET") {
+    const r = await env.DB.prepare("SELECT id,title,description,event_date,source_url,cover_url,status,created_at,updated_at FROM albums WHERE status='published' ORDER BY created_at DESC").all();
+    const rows = r.results || [];
+    await Promise.all(rows.map(async (a) => {
+      try {
+        const ph = await env.DB.prepare("SELECT id,public_url,mime_type,created_at FROM album_photos WHERE album_id=? ORDER BY created_at ASC").bind(a.id).all();
+        a.photos = ph.results || [];
+      } catch (e) {
+        a.photos = [];
+        a.photos_error = true;
+      }
+    }));
+    return json(rows);
+  }
+  if (p === "/api/public/carousel" && m === "GET") {
+    const rows = await env.DB.prepare("SELECT id,title,subtitle,label,image_url,link_url,position FROM carousel_slides WHERE status='published' ORDER BY position ASC,created_at DESC").all();
+    return json(rows.results || []);
+  }
+  if (p === "/api/public/featured" && m === "GET") {
+    const rows = await env.DB.prepare("SELECT a.id,a.title,a.category,a.excerpt,a.cover_url,a.author,a.created_at FROM featured_articles f JOIN articles a ON a.id=f.article_id WHERE a.status='published' ORDER BY f.position ASC,f.created_at DESC").all();
+    return json(rows.results || []);
+  }
+  if (p === "/api/admin/carousel-upload" && m === "POST") {
+    const admin = await authorized(req, env), blogger = admin ? null : await bloggerAuthorized(req, env);
+    if (!admin && (!blogger || !await bloggerCan(env, blogger.id, "manage_carousel"))) return json({ error: "Permission insuffisante pour g\xE9rer le carrousel." }, 403);
+    if (!env.GALLERY || !env.R2_PUBLIC_BASE) return json({ error: "Stockage R2 non configur\xE9." }, 503);
+    const form = await req.formData(), file = form.get("file");
+    if (!file || typeof file.arrayBuffer !== "function" || !file.size) return json({ error: "Choisis une photo." }, 400);
+    if (file.size > 8 * 1024 * 1024) return json({ error: "Photo trop volumineuse : limite de 8 Mo." }, 413);
+    const mime = (file.type || "").toLowerCase(), head = new Uint8Array(await file.slice(0, 16).arrayBuffer());
+    const jpeg = head[0] === 255 && head[1] === 216 && head[2] === 255, png = head[0] === 137 && head[1] === 80 && head[2] === 78 && head[3] === 71, webp = String.fromCharCode(...head.slice(8, 12)) === "WEBP", avif = String.fromCharCode(...head.slice(4, 12)) === "ftypavif";
+    const types = { "image/jpeg": jpeg, "image/png": png, "image/webp": webp, "image/avif": avif };
+    if (!types[mime]) return json({ error: "Photo invalide. Formats accept\xE9s : JPG, PNG, WebP ou AVIF." }, 415);
+    const ext = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/avif": "avif" }[mime], key = "carousel/" + crypto.randomUUID() + "." + ext;
+    await env.GALLERY.put(key, await file.arrayBuffer(), { httpMetadata: { contentType: mime, cacheControl: "public, max-age=31536000, immutable" } });
+    return json({ ok: true, key, url: env.R2_PUBLIC_BASE.replace(/\/$/, "") + "/" + key }, 201);
+  }
+  if (p.startsWith("/api/admin/carousel")) {
+    const admin = await authorized(req, env), blogger = admin ? null : await bloggerAuthorized(req, env);
+    if (!admin && (!blogger || !await bloggerCan(env, blogger.id, "manage_carousel"))) return json({ error: "Permission insuffisante pour g\xE9rer le carrousel." }, 403);
+    const id2 = p.match(/^\/api\/admin\/carousel\/([^/]+)$/)?.[1];
+    if (m === "GET" && !id2) {
+      const rows = await env.DB.prepare("SELECT * FROM carousel_slides ORDER BY position ASC,created_at DESC").all();
+      return json(rows.results || []);
+    }
+    if (m === "POST" && !id2) {
+      const b = await req.json().catch(() => ({})), title = clean(b.title, 180), image = clean(b.image_url, 2e3);
+      if (!title || !image) return json({ error: "Titre et URL de l\u2019image obligatoires." }, 400);
+      const newId = crypto.randomUUID();
+      await env.DB.prepare("INSERT INTO carousel_slides(id,title,subtitle,label,image_url,link_url,position,status) VALUES(?,?,?,?,?,?,?,?)").bind(newId, title, clean(b.subtitle, 500), clean(b.label, 100) || "\xC0 la une \xB7 ActuScout", image, clean(b.link_url, 2e3), Math.max(0, Number(b.position) || 0), b.status === "draft" ? "draft" : "published").run();
+      return json({ ok: true, id: newId }, 201);
+    }
+    if (id2 && m === "PUT") {
+      const b = await req.json().catch(() => ({})), title = clean(b.title, 180), image = clean(b.image_url, 2e3);
+      if (!title || !image) return json({ error: "Titre et URL de l\u2019image obligatoires." }, 400);
+      const x = await env.DB.prepare("UPDATE carousel_slides SET title=?,subtitle=?,label=?,image_url=?,link_url=?,position=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(title, clean(b.subtitle, 500), clean(b.label, 100) || "\xC0 la une \xB7 ActuScout", image, clean(b.link_url, 2e3), Math.max(0, Number(b.position) || 0), b.status === "draft" ? "draft" : "published", id2).run();
+      return x.meta?.changes ? json({ ok: true }) : json({ error: "Diapositive introuvable." }, 404);
+    }
+    if (id2 && m === "DELETE") {
+      const x = await env.DB.prepare("DELETE FROM carousel_slides WHERE id=?").bind(id2).run();
+      return json({ ok: !!x.meta?.changes });
+    }
+    return json({ error: "M\xE9thode non autoris\xE9e." }, 405);
+  }
+  if (p === "/api/admin/featured" && m === "GET") {
+    const admin = await authorized(req, env), blogger = admin ? null : await bloggerAuthorized(req, env);
+    if (!admin && (!blogger || !await bloggerCan(env, blogger.id, "feature_articles"))) return json({ error: "Permission insuffisante pour g\xE9rer les articles \xE0 la une." }, 403);
+    const rows = await env.DB.prepare("SELECT a.id,a.title,a.category,a.status,CASE WHEN f.article_id IS NULL THEN 0 ELSE 1 END AS featured,COALESCE(f.position,0) AS position FROM articles a LEFT JOIN featured_articles f ON f.article_id=a.id ORDER BY featured DESC,position ASC,a.created_at DESC").all();
+    return json(rows.results || []);
+  }
+  if (p === "/api/admin/featured" && m === "PUT") {
+    const admin = await authorized(req, env), blogger = admin ? null : await bloggerAuthorized(req, env);
+    if (!admin && (!blogger || !await bloggerCan(env, blogger.id, "feature_articles"))) return json({ error: "Permission insuffisante pour g\xE9rer les articles \xE0 la une." }, 403);
+    const b = await req.json().catch(() => ({})), ids = Array.isArray(b.article_ids) ? [...new Set(b.article_ids.map((x) => clean(x, 100)).filter(Boolean))].slice(0, 20) : [];
+    const statements = [env.DB.prepare("DELETE FROM featured_articles")];
+    ids.forEach((id2, index) => statements.push(env.DB.prepare("INSERT INTO featured_articles(article_id,position) SELECT id,? FROM articles WHERE id=? AND status='published'").bind(index, id2)));
+    await env.DB.batch(statements);
+    return json({ ok: true, count: ids.length });
+  }
+  const publicArticle = p.match(/^\/api\/public\/articles\/([^/]+)$/);
+  if (publicArticle && m === "GET") {
+    const article = await env.DB.prepare("SELECT * FROM articles WHERE id=? AND status='published'").bind(publicArticle[1]).first();
+    return article ? json(article) : json({ error: "Article introuvable." }, 404);
+  }
+  const pub = p.match(/^\/api\/public\/(albums|articles)$/);
+  if (pub && m === "GET") {
+    const k = pub[1];
+    if (k === "articles") {
+      const page = Math.max(1, Math.min(1e4, Number(u.searchParams.get("page")) || 1)), limit = Math.max(1, Math.min(20, Number(u.searchParams.get("limit")) || 10)), total = await env.DB.prepare("SELECT COUNT(*) AS total FROM articles WHERE status='published'").first(), rows = await env.DB.prepare("SELECT a.*,COALESCE(m.views,0) AS views,COALESCE(m.likes,0) AS likes,COALESCE(m.shares,0) AS shares,(SELECT COUNT(*) FROM article_comments c WHERE c.article_id=a.id AND c.status='approved') AS comments,(SELECT COUNT(*) FROM article_bookmarks b WHERE b.article_id=a.id) AS bookmarks FROM articles a LEFT JOIN article_metrics m ON m.article_id=a.id WHERE a.status='published' ORDER BY a.created_at DESC LIMIT ? OFFSET ?").bind(limit, (page - 1) * limit).all();
+      return json({ articles: rows.results || [], page, limit, total: total?.total || 0, pages: Math.max(1, Math.ceil((total?.total || 0) / limit)) });
+    }
+    const r = await env.DB.prepare("SELECT * FROM albums WHERE status='published' ORDER BY created_at DESC").all();
+    return json(r.results || []);
+  }
+  if (p === "/api/admin/newsletter" && m === "GET") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const [stats, subs, campaigns] = await Promise.all([
+      env.DB.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) AS active, SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending, SUM(CASE WHEN status='unsubscribed' THEN 1 ELSE 0 END) AS unsubscribed FROM newsletter_subscribers").first(),
+      env.DB.prepare("SELECT id,email,status,consent_at,confirmed_at,created_at FROM newsletter_subscribers ORDER BY created_at DESC LIMIT 500").all(),
+      env.DB.prepare("SELECT id,subject,status,recipient_count,sent_count,created_at,sent_at,last_error FROM newsletter_campaigns ORDER BY created_at DESC LIMIT 100").all()
+    ]);
+    return json({ stats: stats || {}, subscribers: subs.results || [], campaigns: campaigns.results || [], email_configured: !!env.RESEND_API_KEY });
+  }
+  if (p === "/api/admin/newsletter/campaigns" && m === "POST") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    const b = await req.json().catch(() => ({})), subject = clean(b.subject, 180), preheader = clean(b.preheader, 220), raw = clean(b.html_content, 5e4), html = await sanitizeArticleHtml(raw);
+    if (subject.length < 3 || html.replace(/<[^>]*>/g, " ").trim().length < 10) return json({ error: "Objet et contenu de la newsletter obligatoires." }, 400);
+    const id2 = crypto.randomUUID();
+    await env.DB.prepare("INSERT INTO newsletter_campaigns(id,subject,preheader,html_content,status) VALUES(?,?,?,?,'draft')").bind(id2, subject, preheader, html).run();
+    return json({ ok: true, id: id2, message: "Brouillon de newsletter enregistr\xE9." }, 201);
+  }
+  const newsletterPrefix = "/api/admin/newsletter/campaigns/", newsletterSuffix = "/send", newsletterSend = p.startsWith(newsletterPrefix) && p.endsWith(newsletterSuffix) ? p.slice(newsletterPrefix.length, -newsletterSuffix.length) : "";
+  if (newsletterSend && m === "POST") {
+    if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+    if (!env.RESEND_API_KEY || !env.ACTUSCOUT_EMAIL_FROM) return json({ error: "Envoi indisponible : configurez RESEND_API_KEY et ACTUSCOUT_EMAIL_FROM dans les secrets du Worker Cloudflare." }, 503);
+    const campaign = await env.DB.prepare("SELECT * FROM newsletter_campaigns WHERE id=?").bind(newsletterSend).first();
+    if (!campaign) return json({ error: "Newsletter introuvable." }, 404);
+    if (campaign.status === "sent") return json({ error: "Cette newsletter a d\xE9j\xE0 \xE9t\xE9 envoy\xE9e." }, 409);
+    const activeCount = await env.DB.prepare("SELECT COUNT(*) AS total FROM newsletter_subscribers WHERE status='active'").first();
+    if (campaign.status === "draft") await env.DB.prepare("UPDATE newsletter_campaigns SET status='sending',recipient_count=?,updated_at=? WHERE id=?").bind(activeCount?.total || 0, (/* @__PURE__ */ new Date()).toISOString(), campaign.id).run();
+    const batch = await env.DB.prepare("SELECT s.id,s.email FROM newsletter_subscribers s LEFT JOIN newsletter_deliveries d ON d.subscriber_id=s.id AND d.campaign_id=? WHERE s.status='active' AND d.id IS NULL ORDER BY s.created_at ASC LIMIT 100").bind(campaign.id).all();
+    const recipients = batch.results || [];
+    if (!recipients.length) {
+      await env.DB.prepare("UPDATE newsletter_campaigns SET status='sent',sent_at=?,updated_at=?,last_error=NULL WHERE id=?").bind((/* @__PURE__ */ new Date()).toISOString(), (/* @__PURE__ */ new Date()).toISOString(), campaign.id).run();
+      return json({ ok: true, status: "sent", sent: 0, remaining: 0, message: "Newsletter envoy\xE9e \xE0 tous les abonn\xE9s actifs." });
+    }
+    const messages = await Promise.all(recipients.map(async (subscriber) => {
+      const token = subscriber.id + "." + await mac(env.SESSION_SECRET || "", "newsletter-unsubscribe:" + subscriber.id);
+      const unsubscribe = "https://actuscout.com/api/newsletter/unsubscribe?token=" + encodeURIComponent(token);
+      const body = '<div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;color:#241631;line-height:1.65"><div style="background:#35145b;padding:22px;color:#fff"><strong>ACTUSCOUT</strong><div style="font-size:12px;opacity:.85">Actualit\xE9s du scoutisme africain</div></div>' + (campaign.preheader ? '<p style="color:#71677b">' + escapeHtml(campaign.preheader) + "</p>" : "") + '<main style="padding:24px 18px">' + campaign.html_content + '</main><footer style="border-top:1px solid #eee;padding:18px;color:#71677b;font-size:12px">Vous recevez ce message car vous avez confirm\xE9 votre inscription \xE0 la newsletter ActuScout.<br><a href="' + unsubscribe + '">Se d\xE9sinscrire</a></footer></div>';
+      return { from: ACTUSCOUT_FROM(env), to: [subscriber.email], subject: campaign.subject, html: body, headers: { "List-Unsubscribe": "<" + unsubscribe + ">", "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" } };
+    }));
+    const response = await fetch("https://api.resend.com/emails/batch", { method: "POST", headers: { Authorization: "Bearer " + env.RESEND_API_KEY, "content-type": "application/json" }, body: JSON.stringify(messages) });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const reason = clean(result.message || result.error || "Erreur du fournisseur d\u2019e-mail.", 500);
+      await env.DB.prepare("UPDATE newsletter_campaigns SET status='failed',last_error=?,updated_at=? WHERE id=?").bind(reason, (/* @__PURE__ */ new Date()).toISOString(), campaign.id).run();
+      return json({ error: "Le fournisseur a refus\xE9 le lot : " + reason }, 502);
+    }
+    const ids = Array.isArray(result.data) ? result.data : Array.isArray(result) ? result : [];
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    const statements = recipients.map((subscriber, index) => env.DB.prepare("INSERT OR IGNORE INTO newsletter_deliveries(id,campaign_id,subscriber_id,provider_id,status,sent_at) VALUES(?,?,?,?, 'sent',?)").bind(crypto.randomUUID(), campaign.id, subscriber.id, ids[index]?.id || null, now));
+    if (statements.length) await env.DB.batch(statements);
+    const sentCount = await env.DB.prepare("SELECT COUNT(*) AS total FROM newsletter_deliveries WHERE campaign_id=? AND status='sent'").bind(campaign.id).first();
+    const remaining = await env.DB.prepare("SELECT COUNT(*) AS total FROM newsletter_subscribers s LEFT JOIN newsletter_deliveries d ON d.subscriber_id=s.id AND d.campaign_id=? WHERE s.status='active' AND d.id IS NULL").bind(campaign.id).first();
+    const complete = (remaining?.total || 0) === 0;
+    await env.DB.prepare("UPDATE newsletter_campaigns SET status=?,sent_count=?,sent_at=CASE WHEN ?=1 THEN ? ELSE sent_at END,last_error=NULL,updated_at=? WHERE id=?").bind(complete ? "sent" : "sending", sentCount?.total || 0, complete ? 1 : 0, now, now, campaign.id).run();
+    return json({ ok: true, status: complete ? "sent" : "sending", sent: recipients.length, total_sent: sentCount?.total || 0, remaining: remaining?.total || 0, message: complete ? "Newsletter envoy\xE9e \xE0 tous les abonn\xE9s." : recipients.length + " e-mails envoy\xE9s. Il reste " + (remaining?.total || 0) + " destinataire(s)." });
+  }
+  if (!await authorized(req, env)) return json({ error: "Authentification requise." }, 401);
+  if (p === "/api/me") return json({ authenticated: true });
+  const match = p.match(/^\/api\/(albums|articles)(?:\/([^/]+))?$/);
+  if (!match) return json({ error: "Route introuvable." }, 404);
+  const kind = match[1], id = match[2], cfg = config[kind];
+  if (m === "GET" && !id) {
+    const r = await env.DB.prepare("SELECT * FROM " + kind + " ORDER BY created_at DESC").all();
+    return json(r.results || []);
+  }
+  if (m === "GET" && id) {
+    const r = await env.DB.prepare("SELECT * FROM " + kind + " WHERE id=?").bind(id).first();
+    return r ? json(r) : json({ error: "Introuvable." }, 404);
+  }
+  if (m === "POST" && !id || m === "PUT" && id) {
+    const b = await req.json().catch(() => ({}));
+    for (const f of cfg.required) if (!clean(b[f], cfg.limits[f])) return json({ error: "Champ obligatoire : " + f }, 400);
+    if (kind === "articles" && ["pending", "published"].includes(b.status) && !/^https:\/\//i.test(clean(b.cover_url, 2e3))) return json({ error: "Une photo de couverture valide est obligatoire avant la soumission ou la publication." }, 400);
+    const vals = await Promise.all(cfg.fields.map(async (f) => f === "status" ? ["draft", "pending", "published"].includes(b[f]) ? b[f] : "draft" : f === "body" ? await sanitizeArticleHtml(b[f]) : clean(b[f], cfg.limits[f])));
+    if (m === "POST") {
+      const newId = crypto.randomUUID(), cols = ["id", ...cfg.fields], marks = cols.map(() => "?").join(",");
+      await env.DB.prepare("INSERT INTO " + kind + "(" + cols.join(",") + ") VALUES(" + marks + ")").bind(newId, ...vals).run();
+      return json({ ok: true, id: newId }, 201);
+    }
+    await env.DB.prepare("UPDATE " + kind + " SET " + cfg.fields.map((f) => f + "=?").join(",") + ",updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(...vals, id).run();
+    return json({ ok: true });
+  }
+  if (m === "DELETE" && id) {
+    await env.DB.prepare("DELETE FROM " + kind + " WHERE id=?").bind(id).run();
+    return json({ ok: true });
+  }
+  return json({ error: "M\xE9thode non autoris\xE9e." }, 405);
+}
+__name(api, "api");
+var _a;
+function injectPublicFaq(html) {
+  if (html.includes('id="actuscout-faq-widget"')) return html;
+  const widget = String.raw(_a || (_a = __template([`<style id="actuscout-faq-style">
+#actuscout-faq-widget{position:fixed;right:22px;bottom:22px;z-index:2147483000;font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#241631}
+#actuscout-faq-toggle{display:flex;align-items:center;gap:9px;border:0;border-radius:999px;padding:14px 19px;background:#35145b;color:#fff;font-weight:700;box-shadow:0 8px 28px #1d102b40;cursor:pointer}
+#actuscout-faq-toggle:focus-visible,#actuscout-faq-widget button:focus-visible,#actuscout-faq-search:focus-visible{outline:3px solid #d5b7ff;outline-offset:3px}
+#actuscout-faq-panel{display:none;position:absolute;right:0;bottom:64px;width:min(370px,calc(100vw - 28px));max-height:min(570px,calc(100vh - 110px));overflow:hidden;background:#fff;border:1px solid #e7deed;border-radius:16px;box-shadow:0 16px 50px #1d102b35}
+#actuscout-faq-panel[aria-hidden="false"]{display:flex;flex-direction:column}
+#actuscout-faq-head{padding:17px 18px;background:#35145b;color:white;display:flex;align-items:center;justify-content:space-between;gap:12px}
+#actuscout-faq-head strong{font-size:16px}#actuscout-faq-close{background:transparent;color:white;border:0;font-size:25px;line-height:1;cursor:pointer;padding:2px 7px}
+#actuscout-faq-search{display:block;width:calc(100% - 28px);margin:13px 14px 8px;padding:11px 12px;border:1px solid #ddd3e7;border-radius:9px;font:inherit}
+#actuscout-faq-list{overflow:auto;padding:0 14px 14px}
+#actuscout-faq-list details{border-bottom:1px solid #eee8f3;padding:11px 2px}
+#actuscout-faq-list summary{font-weight:650;cursor:pointer;line-height:1.4}
+#actuscout-faq-list p{font-size:14px;line-height:1.55;color:#5d5368;margin:9px 0 2px}
+#actuscout-faq-foot{padding:12px 16px;border-top:1px solid #eee8f3;font-size:13px;color:#71677b}
+#actuscout-faq-foot a{color:#35145b;font-weight:700}
+@media(max-width:480px){#actuscout-faq-widget{right:14px;bottom:14px}#actuscout-faq-toggle{padding:13px 16px}#actuscout-faq-panel{right:-2px;width:calc(100vw - 24px);max-height:70vh}}
+</style>
+<div id="actuscout-faq-widget">
+ <section id="actuscout-faq-panel" role="dialog" aria-label="Questions fr\xE9quentes ActuScout" aria-hidden="true">
+  <header id="actuscout-faq-head"><div><strong>Centre d\u2019aide ActuScout</strong><div style="font-size:12px;opacity:.85;margin-top:3px">R\xE9ponses aux questions fr\xE9quentes</div></div><button id="actuscout-faq-close" type="button" aria-label="Fermer">\xD7</button></header>
+  <input id="actuscout-faq-search" type="search" placeholder="Rechercher une question\u2026" aria-label="Rechercher dans la FAQ">
+  <div id="actuscout-faq-list">
+   <details><summary>Qu\u2019est-ce qu\u2019ActuScout ?</summary><p>ActuScout est une plateforme d\u2019information consacr\xE9e au scoutisme, \xE0 ses actualit\xE9s, \xE0 ses initiatives et \xE0 la vie de ses communaut\xE9s.</p></details>
+   <details><summary>Comment consulter les actualit\xE9s ?</summary><p>Ouvrez la rubrique Actualit\xE9s depuis le menu du site. S\xE9lectionnez un article pour lire son contenu complet et retrouver ses options de partage et d\u2019interaction.</p></details>
+   <details><summary>O\xF9 trouver les albums photos ?</summary><p>La rubrique Albums rassemble les galeries publi\xE9es pour pr\xE9senter les activit\xE9s, rencontres et \xE9v\xE9nements couverts par ActuScout.</p></details>
+   <details><summary>Comment devenir blogueur sur ActuScout ?</summary><p>Acc\xE9dez \xE0 la page \xAB Devenir blogueur \xBB, consultez les conditions et soumettez votre candidature \xE0 l\u2019\xE9quipe de r\xE9daction. L\u2019acc\xE8s \xE0 l\u2019espace de r\xE9daction est accord\xE9 apr\xE8s admission et formation initiale.</p></details>
+   <details><summary>Comment proposer un article ou une information ?</summary><p>Vous pouvez d\xE9poser une candidature comme blogueur depuis la page d\xE9di\xE9e. Les propositions sont examin\xE9es par l\u2019\xE9quipe \xE9ditoriale avant toute publication.</p></details>
+   <details><summary>Les articles sont-ils publi\xE9s automatiquement ?</summary><p>Non. Les contenus soumis par les blogueurs sont transmis \xE0 la r\xE9daction et doivent \xEAtre examin\xE9s et valid\xE9s avant leur publication.</p></details>
+   <details><summary>Comment soutenir ActuScout ?</summary><p>Consultez la page \xAB Faire un don \xBB pour d\xE9couvrir les moyens de soutenir les activit\xE9s et le d\xE9veloppement de la plateforme.</p></details>
+   <details><summary>ActuScout est-il un groupe scout, un district ou une organisation scoute officielle ?</summary><p>Non. ActuScout n\u2019est ni un groupe scout, ni un district, ni une association scoute, ni un organe officiel de gouvernance ou de repr\xE9sentation du scoutisme. ActuScout est un m\xE9dia ind\xE9pendant consacr\xE9 au mouvement scout. Il informe sur ses actualit\xE9s, ses initiatives et ses acteurs, avec la volont\xE9 de valoriser positivement l\u2019image du scoutisme \xE0 l\u2019\xE9chelle internationale et de faire conna\xEEtre les r\xE9alit\xE9s du mouvement au-del\xE0 des fronti\xE8res. La publication d\u2019une information sur ActuScout ne signifie pas qu\u2019elle constitue une communication officielle d\u2019une organisation scoute.</p></details>
+   <details><summary>ActuScout est-il affili\xE9 \xE0 une organisation scoute nationale ou mondiale ?</summary><p>ActuScout est un m\xE9dia ind\xE9pendant et ne pr\xE9tend pas repr\xE9senter officiellement une association nationale, une organisation mondiale ou une institution scoute. Les organisations et personnes mentionn\xE9es dans nos contenus conservent leur identit\xE9 et leur responsabilit\xE9 propres.</p></details>
+   <details><summary>Comment m\u2019inscrire \xE0 la newsletter ActuScout ?</summary><p>Rendez-vous en bas de la page d\u2019accueil, dans la rubrique Newsletter. Saisissez votre adresse e-mail, cochez la case de consentement puis cliquez sur \xAB S\u2019abonner \xBB. Un message de confirmation vous sera envoy\xE9. Vous devez cliquer sur le lien contenu dans ce message pour activer votre inscription. Pensez \xE0 v\xE9rifier le dossier des courriers ind\xE9sirables si le message n\u2019appara\xEEt pas dans votre bo\xEEte de r\xE9ception.</p></details>
+   <details><summary>Pourquoi dois-je confirmer mon adresse e-mail ?</summary><p>La confirmation permet de v\xE9rifier que vous avez acc\xE8s \xE0 l\u2019adresse indiqu\xE9e et que vous souhaitez r\xE9ellement recevoir les informations d\u2019ActuScout. Tant que vous n\u2019avez pas cliqu\xE9 sur le lien de confirmation, votre inscription reste en attente et vous ne recevez pas les newsletters.</p></details>
+   <details><summary>Que vais-je recevoir dans la newsletter ?</summary><p>Vous pourrez recevoir une s\xE9lection d\u2019actualit\xE9s, de reportages, d\u2019informations sur les \xE9v\xE9nements, les initiatives et les activit\xE9s du mouvement scout publi\xE9s par ActuScout.</p></details>
+   <details><summary>Comment me d\xE9sabonner de la newsletter ?</summary><p>Chaque newsletter contient un lien de d\xE9sabonnement. Cliquez dessus pour mettre fin \xE0 votre abonnement. Votre adresse sera alors retir\xE9e de la liste des destinataires des prochaines campagnes.</p></details>
+   <details><summary>Comment signaler une erreur ou contacter l\u2019\xE9quipe ?</summary><p>Utilisez les coordonn\xE9es ou les moyens de contact pr\xE9sent\xE9s sur la page \xAB Qui sommes-nous \xBB afin de transmettre votre demande \xE0 l\u2019\xE9quipe ActuScout.</p></details>
+  </div>
+  <footer id="actuscout-faq-foot">Vous n\u2019avez pas trouv\xE9 votre r\xE9ponse ? Consultez <a href="/qui-sommes-nous">Qui sommes-nous</a>.</footer>
+ </section>
+ <button id="actuscout-faq-toggle" type="button" aria-expanded="false" aria-controls="actuscout-faq-panel"><span aria-hidden="true">?</span> Aide &amp; FAQ</button>
+</div>
+<script id="actuscout-faq-script">
+(()=>{const root=document.getElementById('actuscout-faq-widget');if(!root||root.dataset.ready)return;root.dataset.ready='1';const panel=root.querySelector('#actuscout-faq-panel'),toggle=root.querySelector('#actuscout-faq-toggle'),close=root.querySelector('#actuscout-faq-close'),search=root.querySelector('#actuscout-faq-search'),items=[...root.querySelectorAll('#actuscout-faq-list details')];function setOpen(open){panel.setAttribute('aria-hidden',String(!open));toggle.setAttribute('aria-expanded',String(open));if(open)search.focus();else toggle.focus()}toggle.addEventListener('click',()=>setOpen(panel.getAttribute('aria-hidden')==='true'));close.addEventListener('click',()=>setOpen(false));document.addEventListener('keydown',e=>{if(e.key==='Escape'&&panel.getAttribute('aria-hidden')==='false')setOpen(false)});search.addEventListener('input',()=>{const q=search.value.trim().toLocaleLowerCase('fr');items.forEach(item=>{item.hidden=!item.textContent.toLocaleLowerCase('fr').includes(q);if(q&& !item.hidden)item.open=true})})})();
+<\/script>`])));
+  return html.includes("</body>") ? html.replace("</body>", widget + "</body>") : html + widget;
+}
+__name(injectPublicFaq, "injectPublicFaq");
+var FAVICON_LINKS = '<link rel="icon" type="image/png" sizes="96x96" href="https://actuscout.com/favicon.png"><link rel="shortcut icon" href="https://actuscout.com/favicon.ico"><link rel="apple-touch-icon" sizes="180x180" href="https://actuscout.com/apple-touch-icon.png"><link rel="icon" type="image/svg+xml" href="https://actuscout.com/favicon.svg">';
+async function withFavicon(response) {
+  if (!response || !response.ok) return response;
+  const type = response.headers.get("content-type") || "";
+  if (!type.includes("text/html")) return response;
+  let html = await response.text();
+  html = html.replace(/<link\b[^>]*rel=["'](?:shortcut )?icon["'][^>]*>\s*/gi, "").replace(/<link\b[^>]*rel=["']apple-touch-icon["'][^>]*>\s*/gi, "");
+  html = html.replace(/<\/head>/i, FAVICON_LINKS + "</head>");
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  return new Response(html, { status: response.status, statusText: response.statusText, headers });
+}
+__name(withFavicon, "withFavicon");
+async function withPublicFaq(response) {
+  const responseWithFavicon = await withFavicon(response);
+  if (!responseWithFavicon || !responseWithFavicon.ok) return responseWithFavicon;
+  const type = responseWithFavicon.headers.get("content-type") || "";
+  if (!type.includes("text/html")) return responseWithFavicon;
+  const html = injectPublicFaq(await responseWithFavicon.text());
+  const headers = new Headers(responseWithFavicon.headers);
+  headers.delete("content-length");
+  return new Response(html, { status: responseWithFavicon.status, statusText: responseWithFavicon.statusText, headers });
+}
+__name(withPublicFaq, "withPublicFaq");
+var pageRoutes = { "/modules-formation": "/modules-formation.html", "/modules-formation/": "/modules-formation.html", "/devenir-formateur": "/devenir-formateur.html", "/formateur": "/formateur.html", "/module": "/module.html", "/admin-formateurs": "/admin-formateurs.html", "/actualites": "/actualites.html", "/actualites/": "/actualites.html", "/redaction": "/editor/index.html", "/redaction/": "/editor/index.html", "/": "/index.html", "/albums": "/albums.html", "/albums/": "/albums.html", "/admin": "/admin.html", "/admin/": "/admin.html", "/admin-blogueurs": "/admin-blogueurs.html", "/devenir-blogueur": "/devenir-blogueur.html", "/faire-un-don": "/faire-un-don.html", "/blogueur": "/blogueur.html", "/blogueur/": "/blogueur.html", "/article": "/article.html", "/article/": "/article.html", "/qui-sommes-nous": "/qui-sommes-nous.html", "/qui-sommes-nous/": "/qui-sommes-nous.html" };
+function articleSlug(title, id) {
+  const base = String(title || "article").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/&/g, " et ").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 100).replace(/-+$/, "") || "article";
+  const suffix = String(id || "").replace(/[^a-z0-9]/gi, "").slice(-8).toLowerCase();
+  return base + (suffix ? "-" + suffix : "");
+}
+__name(articleSlug, "articleSlug");
+function xmlEscape(value) {
+  return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+__name(xmlEscape, "xmlEscape");
+async function sitemapResponse(env) {
+  const pages = ["/", "/actualites", "/albums", "/qui-sommes-nous", "/devenir-blogueur", "/devenir-formateur", "/modules-formation", "/faire-un-don"];
+  const urls = pages.map((path) => "<url><loc>https://actuscout.com" + path + "</loc></url>");
+  const rows = await env.DB.prepare("SELECT id,title,updated_at,created_at FROM articles WHERE status='published' ORDER BY created_at DESC").all();
+  for (const article of rows.results || []) {
+    const loc = "https://actuscout.com/actualites/" + articleSlug(article.title, article.id);
+    const raw = article.updated_at || article.created_at;
+    const value = String(raw || "");
+    const stamp = raw ? new Date(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(value) ? value : value.replace(" ", "T") + "Z") : null;
+    const lastmod = stamp && !Number.isNaN(stamp.getTime()) ? "<lastmod>" + stamp.toISOString().slice(0, 10) + "</lastmod>" : "";
+    urls.push("<url><loc>" + xmlEscape(loc) + "</loc>" + lastmod + "</url>");
+  }
+  const modules = await env.DB.prepare("SELECT id,updated_at,created_at FROM training_modules WHERE status='published' ORDER BY published_at DESC,created_at DESC").all();
+  for (const module of modules.results || []) {
+    const loc = "https://actuscout.com/module?id=" + encodeURIComponent(module.id);
+    const raw = module.updated_at || module.created_at;
+    const value = String(raw || "");
+    const stamp = raw ? new Date(/(?:Z|[+-]\\d{2}:?\\d{2})$/i.test(value) ? value : value.replace(" ", "T") + "Z") : null;
+    const lastmod = stamp && !Number.isNaN(stamp.getTime()) ? "<lastmod>" + stamp.toISOString().slice(0, 10) + "</lastmod>" : "";
+    urls.push("<url><loc>" + xmlEscape(loc) + "</loc>" + lastmod + "</url>");
+  }
+  const body = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + urls.map((x) => "  " + x).join("\n") + "\n</urlset>";
+  return new Response(body, { status: 200, headers: { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=300, s-maxage=900", "x-content-type-options": "nosniff" } });
+}
+__name(sitemapResponse, "sitemapResponse");
+var ROBOTS_TXT = "# ActuScout \u2014 r\xE8gles d\u2019exploration\n# Les r\xE8gles robots.txt ne remplacent pas les contr\xF4les d\u2019acc\xE8s du serveur.\nUser-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /admin/\nDisallow: /admin-blogueurs\nDisallow: /admin-blogueurs/\nDisallow: /blogueur\nDisallow: /blogueur/\nDisallow: /redaction\nDisallow: /redaction/\nDisallow: /editor/\nDisallow: /formateur\nDisallow: /admin-formateurs\nDisallow: /api/\n\nUser-agent: GPTBot\nAllow: /\nDisallow: /admin\nDisallow: /admin/\nDisallow: /admin-blogueurs\nDisallow: /admin-blogueurs/\nDisallow: /blogueur\nDisallow: /blogueur/\nDisallow: /redaction\nDisallow: /redaction/\nDisallow: /editor/\nDisallow: /formateur\nDisallow: /admin-formateurs\nDisallow: /api/\n\nUser-agent: OAI-SearchBot\nAllow: /\nDisallow: /admin\nDisallow: /admin/\nDisallow: /admin-blogueurs\nDisallow: /admin-blogueurs/\nDisallow: /blogueur\nDisallow: /blogueur/\nDisallow: /redaction\nDisallow: /redaction/\nDisallow: /editor/\nDisallow: /formateur\nDisallow: /admin-formateurs\nDisallow: /api/\n\nUser-agent: ChatGPT-User\nAllow: /\nDisallow: /admin\nDisallow: /admin/\nDisallow: /admin-blogueurs\nDisallow: /admin-blogueurs/\nDisallow: /blogueur\nDisallow: /blogueur/\nDisallow: /redaction\nDisallow: /redaction/\nDisallow: /editor/\nDisallow: /formateur\nDisallow: /admin-formateurs\nDisallow: /api/\n\nUser-agent: ClaudeBot\nAllow: /\nDisallow: /admin\nDisallow: /admin/\nDisallow: /admin-blogueurs\nDisallow: /admin-blogueurs/\nDisallow: /blogueur\nDisallow: /blogueur/\nDisallow: /redaction\nDisallow: /redaction/\nDisallow: /editor/\nDisallow: /formateur\nDisallow: /admin-formateurs\nDisallow: /api/\n\nUser-agent: Claude-SearchBot\nAllow: /\nDisallow: /admin\nDisallow: /admin/\nDisallow: /admin-blogueurs\nDisallow: /admin-blogueurs/\nDisallow: /blogueur\nDisallow: /blogueur/\nDisallow: /redaction\nDisallow: /redaction/\nDisallow: /editor/\nDisallow: /formateur\nDisallow: /admin-formateurs\nDisallow: /api/\n\nUser-agent: Claude-User\nAllow: /\nDisallow: /admin\nDisallow: /admin/\nDisallow: /admin-blogueurs\nDisallow: /admin-blogueurs/\nDisallow: /blogueur\nDisallow: /blogueur/\nDisallow: /redaction\nDisallow: /redaction/\nDisallow: /editor/\nDisallow: /formateur\nDisallow: /admin-formateurs\nDisallow: /api/\n\nUser-agent: PerplexityBot\nAllow: /\nDisallow: /admin\nDisallow: /admin/\nDisallow: /admin-blogueurs\nDisallow: /admin-blogueurs/\nDisallow: /blogueur\nDisallow: /blogueur/\nDisallow: /redaction\nDisallow: /redaction/\nDisallow: /editor/\nDisallow: /formateur\nDisallow: /admin-formateurs\nDisallow: /api/\n\nUser-agent: Perplexity-User\nAllow: /\nDisallow: /admin\nDisallow: /admin/\nDisallow: /admin-blogueurs\nDisallow: /admin-blogueurs/\nDisallow: /blogueur\nDisallow: /blogueur/\nDisallow: /redaction\nDisallow: /redaction/\nDisallow: /editor/\nDisallow: /formateur\nDisallow: /admin-formateurs\nDisallow: /api/\n\nUser-agent: Google-Extended\nAllow: /\nDisallow: /admin\nDisallow: /admin/\nDisallow: /admin-blogueurs\nDisallow: /admin-blogueurs/\nDisallow: /blogueur\nDisallow: /blogueur/\nDisallow: /redaction\nDisallow: /redaction/\nDisallow: /editor/\nDisallow: /formateur\nDisallow: /admin-formateurs\nDisallow: /api/\n\nUser-agent: Bytespider\nAllow: /\nDisallow: /admin\nDisallow: /admin/\nDisallow: /admin-blogueurs\nDisallow: /admin-blogueurs/\nDisallow: /blogueur\nDisallow: /blogueur/\nDisallow: /redaction\nDisallow: /redaction/\nDisallow: /editor/\nDisallow: /formateur\nDisallow: /admin-formateurs\nDisallow: /api/\n\nUser-agent: Amazonbot\nAllow: /\nDisallow: /admin\nDisallow: /admin/\nDisallow: /admin-blogueurs\nDisallow: /admin-blogueurs/\nDisallow: /blogueur\nDisallow: /blogueur/\nDisallow: /redaction\nDisallow: /redaction/\nDisallow: /editor/\nDisallow: /formateur\nDisallow: /admin-formateurs\nDisallow: /api/\n\nUser-agent: Applebot-Extended\nAllow: /\nDisallow: /admin\nDisallow: /admin/\nDisallow: /admin-blogueurs\nDisallow: /admin-blogueurs/\nDisallow: /blogueur\nDisallow: /blogueur/\nDisallow: /redaction\nDisallow: /redaction/\nDisallow: /editor/\nDisallow: /formateur\nDisallow: /admin-formateurs\nDisallow: /api/\n\nUser-agent: Meta-ExternalAgent\nAllow: /\nDisallow: /admin\nDisallow: /admin/\nDisallow: /admin-blogueurs\nDisallow: /admin-blogueurs/\nDisallow: /blogueur\nDisallow: /blogueur/\nDisallow: /redaction\nDisallow: /redaction/\nDisallow: /editor/\nDisallow: /formateur\nDisallow: /admin-formateurs\nDisallow: /api/\n\nSitemap: https://actuscout.com/sitemap.xml\n";
+var index_default = { async fetch(req, env) {
+  const u = new URL(req.url);
+  let prettyArticlePath = u.pathname.startsWith("/actualites/");
+  try {
+    if (prettyArticlePath) {
+      const requestedSlug = decodeURIComponent(u.pathname.slice("/actualites/".length)).replace(/\/$/, "");
+      const list = await env.DB.prepare("SELECT id,title FROM articles WHERE status='published' ORDER BY created_at DESC").all();
+      const match = (list.results || []).find((item) => articleSlug(item.title, item.id) === requestedSlug);
+      if (match) {
+        u.pathname = "/article";
+        u.searchParams.set("id", match.id);
+      } else prettyArticlePath = false;
+    }
+    if (u.pathname === "/robots.txt" && req.method === "GET") return new Response(ROBOTS_TXT, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=3600" } });
+    if (u.pathname === "/sitemap.xml" && req.method === "GET") return await sitemapResponse(env);
+    if (u.pathname.startsWith("/api/")) return await api(req, env);
+    if ((u.pathname === "/article" || u.pathname === "/article/" || u.pathname === "/article.html") && u.searchParams.get("id")) {
+      const id = u.searchParams.get("id");
+      const article = await env.DB.prepare("SELECT id,title,category,excerpt,cover_url,author,created_at,updated_at,original_published_at,original_updated_at FROM articles WHERE id=? AND status='published'").bind(id).first();
+      if (article) {
+        const asset = await env.ASSETS.fetch(new Request(new URL("/article.html", u.origin)));
+        if (asset.ok) {
+          let html = await asset.text();
+          const plain = /* @__PURE__ */ __name((value) => String(value ?? "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/\s+/g, " ").trim(), "plain");
+          const isoDate = /* @__PURE__ */ __name((value) => {
+            if (!value) return void 0;
+            const raw = String(value).trim();
+            const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw) ? raw.replace(" ", "T") + "Z" : raw;
+            const date = new Date(normalized);
+            return Number.isNaN(date.getTime()) ? void 0 : date.toISOString();
+          }, "isoDate");
+          const titleText = plain(article.title) || "Article ActuScout";
+          const descriptionText = (plain(article.excerpt) || plain(article.category) || "Actualit\xE9s du scoutisme africain").slice(0, 300);
+          const title = escapeHtml(titleText);
+          const description = escapeHtml(descriptionText);
+          const canonical = "https://actuscout.com/actualites/" + articleSlug(article.title, article.id);
+          if (!prettyArticlePath) return new Response(null, { status: 301, headers: { Location: canonical, "cache-control": "public, max-age=86400" } });
+          const image = article.cover_url && (String(article.cover_url).startsWith("https://") || String(article.cover_url).startsWith("http://")) ? article.cover_url : String(article.cover_url || "").startsWith("/") && !String(article.cover_url).startsWith("//") ? new URL(article.cover_url, u.origin).href : null;
+          const published = isoDate(article.original_published_at || article.created_at);
+          const modified = isoDate(article.original_updated_at || article.updated_at || article.created_at);
+          const structuredData = {
+            "@context": "https://schema.org",
+            "@type": "NewsArticle",
+            headline: titleText,
+            ...image ? { image: [image] } : {},
+            ...published ? { datePublished: published } : {},
+            ...modified ? { dateModified: modified } : {},
+            author: { "@type": "Person", name: plain(article.author) || "R\xE9daction ActuScout" },
+            publisher: { "@type": "Organization", name: "ActuScout", logo: { "@type": "ImageObject", url: "https://actuscout.com/favicon.svg" } },
+            description: descriptionText,
+            mainEntityOfPage: { "@type": "WebPage", "@id": canonical },
+            inLanguage: "fr"
+          };
+          const jsonLd = JSON.stringify(structuredData).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026");
+          const meta = '<meta name="actuscout:article-id" content="' + escapeHtml(article.id) + '"><title>' + title + ' | ActuScout</title><meta name="description" content="' + description + '"><link rel="canonical" href="' + canonical + '"><meta property="og:type" content="article"><meta property="og:site_name" content="ActuScout"><meta property="og:locale" content="fr_FR"><meta property="og:title" content="' + title + '"><meta property="og:description" content="' + description + '"><meta property="og:url" content="' + canonical + '">' + (image ? '<meta property="og:image" content="' + escapeHtml(image) + '"><meta property="og:image:secure_url" content="' + escapeHtml(image) + '"><meta property="og:image:alt" content="' + title + '">' : "") + '<meta name="twitter:card" content="' + (image ? "summary_large_image" : "summary") + '"><meta name="twitter:title" content="' + title + '"><meta name="twitter:description" content="' + description + '">' + (image ? '<meta name="twitter:image" content="' + escapeHtml(image) + '"><meta name="twitter:image:alt" content="' + title + '">' : "") + (published ? '<meta property="article:published_time" content="' + published + '">' : "") + (modified ? '<meta property="article:modified_time" content="' + modified + '">' : "") + '<script type="application/ld+json">' + jsonLd + "<\/script>";
+          html = html.replace(/<title>[\s\S]*?<\/title>/i, "").replace("</head>", meta + "</head>");
+          html = html.replace("const articleId=params.get('id');", `const articleId=params.get('id')||document.querySelector('meta[name=\\"actuscout:article-id\\"]')?.content||null;`);
+          html = html.replace("link.href='/article?id='+encodeURIComponent(item.id);", "link.href='/actualites/'+articleSlug(item.title,item.id);");
+          return await withPublicFaq(new Response(html, { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=60, s-maxage=120" } }));
+        }
+      }
+    }
+    if (["/favicon.ico", "/favicon.png", "/apple-touch-icon.png"].includes(u.pathname) && req.method === "GET") {
+      const dataResponse = await env.ASSETS.fetch(new URL("/favicon-assets.json", u.origin));
+      if (!dataResponse.ok) return new Response("Favicon indisponible", { status: 404 });
+      const data = await dataResponse.json();
+      const encoded = u.pathname === "/favicon.ico" ? data.ico : u.pathname === "/favicon.png" ? data.png96 : data.apple180;
+      if (!encoded) return new Response("Favicon indisponible", { status: 404 });
+      const bytes = Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0));
+      const mime = u.pathname === "/favicon.ico" ? "image/x-icon" : "image/png";
+      return new Response(bytes, { status: 200, headers: { "content-type": mime, "cache-control": "public, max-age=31536000, immutable", "x-content-type-options": "nosniff" } });
+    }
+    const assetPath = pageRoutes[u.pathname];
+    if (assetPath) {
+      const assetUrl = new URL(assetPath, u.origin);
+      assetUrl.search = u.search;
+      let assetResponse = await env.ASSETS.fetch(new Request(assetUrl, req));
+      if (["/", "/index.html"].includes(u.pathname)) {
+        const stored = await env.GALLERY.get("site/index.html");
+        if (stored) assetResponse = new Response(stored.body, { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=60, s-maxage=300" } });
+      }
+      if (["/admin", "/admin/", "/admin.html"].includes(u.pathname)) {
+        const stored = await env.GALLERY.get("site/admin.html");
+        if (stored) assetResponse = new Response(stored.body, { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "private, no-store" } });
+      }
+      if (["/", "/index.html", "/actualites", "/actualites/"].includes(u.pathname) && assetResponse.ok) {
+        let page = await assetResponse.text();
+        if (u.pathname === "/" || u.pathname === "/index.html") page = page.replace("const articleUrl='/article?id='+encodeURIComponent(article.id);", "const articleUrl='/actualites/'+articleSlug(article.title,article.id);");
+        if (u.pathname === "/actualites" || u.pathname === "/actualites/") {
+          page = page.replace("card.href='/article.html?id='+encodeURIComponent(a.id);", "card.href='/actualites/'+articleSlug(a.title,a.id);");
+          page = page.replace("link.href='/article.html?id='+encodeURIComponent(item.id);", "link.href='/actualites/'+articleSlug(item.title,item.id);");
+        }
+        if ((u.pathname === "/" || u.pathname === "/index.html") && !page.includes("actuscout-chronicle-home")) page=page.replace("</body>","<script id=\"actuscout-chronicle-home\">(()=>{const load=()=>{fetch('/api/chronicles/current',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(x=>{if(!x)return;let card=document.getElementById('homeThoughtCard');if(!card)card=[...document.querySelectorAll('.mag-card')].find(el=>(el.querySelector('h3')?.textContent||'').toLowerCase().includes('une pensée'));if(!card)return;const art=document.getElementById('homeThoughtImage')||card.querySelector('.mag-art');const desc=document.getElementById('homeThoughtDescription')||card.querySelector('.mag-copy p');if(art){art.innerHTML='';const img=document.createElement('img');img.src=x.image_url;img.alt='Une pensée';img.loading='lazy';img.style.cssText='display:block;width:100%;height:100%;object-fit:cover;border-radius:inherit';art.appendChild(img)}if(desc)desc.textContent=x.description}).catch(()=>{})};if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',load,{once:true});else load()})();</script>"+"</body>");
+        const pageHeaders = new Headers(assetResponse.headers);
+        pageHeaders.delete("content-length");
+        assetResponse = new Response(page, { status: assetResponse.status, headers: pageHeaders });
+      }
+      if (u.pathname === "/admin" || u.pathname === "/admin/" || u.pathname === "/admin.html") {
+        let page = await assetResponse.text();
+        page = page.replace(String.fromCharCode(92) + "nlet adminModules=[];", "let adminModules=[];");
+        if (!page.includes("actuscout-chronicle-admin")) page=page.replace("</body>","<script id=\"actuscout-chronicle-admin\">(()=>{const nav=document.querySelector('.admin-nav'),workspace=document.querySelector('.admin-workspace');if(!nav||!workspace)return;let button=nav.querySelector('[data-view=\"chronicles\"]');if(!button){button=document.createElement('button');button.type='button';button.dataset.view='chronicles';button.textContent='Une pensée · Chroniques';nav.appendChild(button)}let section=document.getElementById('chronicles');if(!section){section=document.createElement('section');section.id='chronicles';section.className='hidden';workspace.appendChild(section)}if(!document.getElementById('chronicleForm'))section.innerHTML='<h2>Une pensée — Gestion des chroniques</h2><p class=\"muted\">Une image, une courte description et une date d’apparition. La dernière chronique reste visible jusqu’à la suivante.</p><form id=\"chronicleForm\" class=\"entry\"><label for=\"chronicleImage\">Image</label><input id=\"chronicleImage\" name=\"image\" type=\"file\" accept=\"image/jpeg,image/png,image/webp\" required><label for=\"chronicleDescription\">Courte description</label><textarea id=\"chronicleDescription\" name=\"description\" maxlength=\"280\" required></textarea><label for=\"chronicleDate\">Date et heure d’apparition</label><input id=\"chronicleDate\" name=\"scheduled_at\" type=\"datetime-local\" required><button type=\"submit\">Enregistrer et programmer</button><p id=\"chronicleStatus\" class=\"muted\" aria-live=\"polite\"></p></form><h3>Chroniques programmées et publiées</h3><div id=\"chronicleList\"></div>';const list=document.getElementById('chronicleList'),form=document.getElementById('chronicleForm'),status=document.getElementById('chronicleStatus');const esc=s=>String(s??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));const load=async()=>{try{const r=await fetch('/api/admin/chronicles',{cache:'no-store'}),rows=await r.json();if(!r.ok)throw Error(rows.error||'Chargement impossible');const now=Date.now();list.innerHTML=rows.map(x=>'<article class=\"entry\"><img src=\"'+esc(x.image_url)+'\" alt=\"\" style=\"max-width:180px;max-height:130px;object-fit:cover;border-radius:8px\"><p>'+esc(x.description)+'</p><p>'+((new Date(x.scheduled_at).getTime()<=now)?'Publiée':'Programmée')+' · '+esc(new Date(x.scheduled_at).toLocaleString('fr-FR'))+'</p></article>').join('')||'<p class=\"muted\">Aucune chronique enregistrée.</p>'}catch(e){list.textContent=e.message}};button.onclick=e=>{e.preventDefault();document.body.dataset.view='chronicles';workspace.querySelectorAll(':scope > section').forEach(x=>x.classList.add('hidden'));section.classList.remove('hidden');nav.querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===button));load()};form.onsubmit=async e=>{e.preventDefault();const submit=form.querySelector('button[type=\"submit\"]');submit.disabled=true;status.textContent='Importation et programmation en cours…';try{const data=new FormData(form),local=data.get('scheduled_at');if(local)data.set('scheduled_at',new Date(local).toISOString());const r=await fetch('/api/admin/chronicles',{method:'POST',body:data}),d=await r.json();if(!r.ok)throw Error(d.error||'Enregistrement impossible');status.textContent='Chronique enregistrée et programmée.';form.reset();await load()}catch(err){status.textContent=err.message||'Erreur pendant l’importation.'}finally{submit.disabled=false}};})();</script>"+"</body>");
+        assetResponse = new Response(page, { status: assetResponse.status, headers: assetResponse.headers });
+      }
+      if (u.pathname === "/formateur" && assetResponse.ok) {
+        let page = await assetResponse.text();
+        page = page.replace('<input name="email" type="email" required>', '<input name="email" type="text" autocomplete="username" required>').replace("Connectez-vous avec votre compte ActuScout. Seuls les formateurs approuv\xE9s peuvent soumettre des modules.", "Connectez-vous avec votre compte ActuScout. Les formateurs approuv\xE9s acc\xE8dent \xE0 leurs modules ; le compte administrateur dispose de l\u2019acc\xE8s complet \xE0 cet espace.").replace("$('#welcome').textContent='Connect\xE9 : '+me.name;await load()", "$('#welcome').textContent=(me.admin?'Administrateur \u2014 acc\xE8s complet':'Connect\xE9 : '+me.name);await load()").replace("rows.map(x=>'<p><b>'+esc(x.title)+'</b> \u2014 '+esc(x.status)+'</p>')", "rows.map(x=>'<p><b>'+esc(x.title)+'</b> \u2014 '+esc(x.status)+(x.trainer_name?' \xB7 '+esc(x.trainer_name):'')+'</p>')");
+        const before = "try{await api('/blogger/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(Object.fromEntries(new FormData(e.currentTarget)))});await enter()}catch(x){$('#loginStatus').textContent=x.message}";
+        const after = "try{const credentials=Object.fromEntries(new FormData(e.currentTarget));try{await api('/blogger/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(credentials)})}catch(bloggerError){await api('/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:credentials.email,password:credentials.password})})}await enter()}catch(x){$('#loginStatus').textContent=x.message}";
+        page = page.replace(before, after);
+        assetResponse = new Response(page, { status: assetResponse.status, headers: assetResponse.headers });
+      }
+      const privatePaths = ["/admin", "/admin/", "/admin-blogueurs", "/admin-blogueurs/", "/blogueur", "/blogueur/", "/redaction", "/redaction/"];
+      assetResponse = await withPasswordTools(assetResponse);
+      return privatePaths.includes(u.pathname) ? await withFavicon(assetResponse) : await withPublicFaq(assetResponse);
+    }
+    return await withPasswordTools(await withFavicon(await env.ASSETS.fetch(req)));
+  } catch (e) {
+    return json({ error: "Erreur serveur." }, 500);
+  }
+} };
+export {
+  index_default as default
+};
