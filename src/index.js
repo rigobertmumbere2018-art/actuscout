@@ -564,11 +564,11 @@ if(p==='/api/admin/newsletter/campaigns'&&m==='POST'){
  await env.DB.prepare("INSERT INTO newsletter_campaigns(id,subject,preheader,html_content,status) VALUES(?,?,?,?,'draft')").bind(id,subject,preheader,html).run();
  return json({ok:true,id,message:'Brouillon de newsletter enregistré.'},201);
 }
-const newsletterSend=p.match(/^\\/api\\/admin\\/newsletter\\/campaigns\\/([^/]+)\\/send$/);
+const newsletterPrefix='/api/admin/newsletter/campaigns/',newsletterSuffix='/send',newsletterSend=p.startsWith(newsletterPrefix)&&p.endsWith(newsletterSuffix)?p.slice(newsletterPrefix.length,-newsletterSuffix.length):'';
 if(newsletterSend&&m==='POST'){
  if(!await authorized(req,env))return json({error:'Authentification requise.'},401);
  if(!env.RESEND_API_KEY||!env.ACTUSCOUT_EMAIL_FROM)return json({error:'Envoi indisponible : configurez RESEND_API_KEY et ACTUSCOUT_EMAIL_FROM dans les secrets du Worker Cloudflare.'},503);
- const campaign=await env.DB.prepare('SELECT * FROM newsletter_campaigns WHERE id=?').bind(newsletterSend[1]).first();
+ const campaign=await env.DB.prepare('SELECT * FROM newsletter_campaigns WHERE id=?').bind(newsletterSend).first();
  if(!campaign)return json({error:'Newsletter introuvable.'},404);
  if(campaign.status==='sent')return json({error:'Cette newsletter a déjà été envoyée.'},409);
  const activeCount=await env.DB.prepare("SELECT COUNT(*) AS total FROM newsletter_subscribers WHERE status='active'").first();
