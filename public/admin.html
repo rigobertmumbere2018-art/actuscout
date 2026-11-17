@@ -45,6 +45,11 @@ body[data-view="albums"] #albumImports{display:none!important}
 <p class="muted">Gère les inscriptions, prépare les campagnes et envoie les messages aux abonnés ayant confirmé leur adresse.</p>
 <div id="newsletterConfigNotice" class="notice" role="status">Vérification de la configuration e-mail…</div>
 <div id="newsletterStats" class="grid"></div>
+<div class="entry"><h3>Diffuser un article publié</h3>
+<p class="muted">Sélectionne un article déjà publié. ActuScout préparera automatiquement la newsletter avec son titre, sa photo, son résumé et un lien vers l’article.</p>
+<label for="newsletterArticleSelect">Article à envoyer</label><select id="newsletterArticleSelect"><option value="">Chargement des articles…</option></select>
+<button type="button" id="newsletterSendArticle">Envoyer cet article aux abonnés</button>
+<p id="newsletterArticleStatus" class="muted" role="status"></p></div>
 <div class="entry"><h3>Préparer une newsletter</h3>
 <form id="newsletterCampaignForm">
 <label>Objet de l’e-mail</label><input name="subject" maxlength="180" required placeholder="Les actualités scoutes de la semaine">
@@ -90,8 +95,42 @@ async function loadFeatured(){const r=await api('/admin/featured'),rows=await r.
 $('#saveFeatured').onclick=async()=>{const ids=[...document.querySelectorAll('[data-featured]:checked')].map(x=>x.dataset.featured);$('#featuredStatus').textContent='Enregistrement…';try{const r=await api('/admin/featured',{method:'PUT',body:JSON.stringify({article_ids:ids})}),v=await r.json();if(!r.ok)throw Error(v.error||'Enregistrement impossible');$('#featuredStatus').textContent=v.count+' article(s) à la une enregistrés.'}catch(e){$('#featuredStatus').textContent=e.message}};
 $('#adminPasswordForm').addEventListener('submit',async e=>{e.preventDefault();const f=e.currentTarget,d=Object.fromEntries(new FormData(f));const status=$('#adminPasswordStatus');if(d.new_password!==d.confirm_password){status.textContent='Les deux nouveaux mots de passe ne correspondent pas.';return}if(d.new_password.length<12){status.textContent='Le nouveau mot de passe doit contenir au moins 12 caractères.';return}const button=f.querySelector('button[type="submit"]');button.disabled=true;status.textContent='Mise à jour…';try{const r=await api('/admin/change-password',{method:'POST',body:JSON.stringify({current_password:d.current_password,new_password:d.new_password})}),v=await r.json();if(!r.ok)throw Error(v.error||'Modification impossible');f.reset();status.textContent=v.message||'Mot de passe modifié.'}catch(error){status.textContent=error.message}finally{button.disabled=false}});
 
+let newsletterArticles=[];
+async function loadNewsletterArticles(){
+ const select=$('#newsletterArticleSelect');
+ try{
+  const r=await api('/articles'),rows=await r.json();if(!r.ok)throw Error(rows.error||'Impossible de charger les articles.');
+  newsletterArticles=(rows||[]).filter(x=>x.status==='published');
+  select.innerHTML='<option value="">Choisir un article publié</option>'+newsletterArticles.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.title)+'</option>').join('');
+  if(!newsletterArticles.length)select.innerHTML='<option value="">Aucun article publié disponible</option>';
+ }catch(e){select.innerHTML='<option value="">Erreur de chargement</option>';$('#newsletterArticleStatus').textContent=e.message}
+}
+function articleNewsletterHtml(article){
+ const cover=article.cover_url?'<p><img src="'+esc(article.cover_url)+'" alt="'+esc(article.title)+'" style="display:block;width:100%;max-width:600px;height:auto;border-radius:8px"></p>':'';
+ const excerpt=article.excerpt?'<p style="font-size:17px;line-height:1.6">'+esc(article.excerpt)+'</p>':'';
+ const link='https://actuscout.com/article?id='+encodeURIComponent(article.id);
+ return '<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#241631;line-height:1.65">'+
+ '<div style="padding:16px 20px;background:#35145b;color:#fff;font-weight:bold">ACTUSCOUT · RÉDACTION</div><div style="padding:22px">'+cover+
+ '<h1 style="font-size:26px;line-height:1.25">'+esc(article.title)+'</h1>'+excerpt+
+ '<div>'+String(article.body||'')+'</div><p style="margin-top:28px"><a href="'+link+'" style="display:inline-block;background:#35145b;color:#fff;padding:13px 20px;text-decoration:none;border-radius:6px">Lire l’article complet</a></p></div></div>';
+}
+$('#newsletterSendArticle').addEventListener('click',async()=>{
+ const status=$('#newsletterArticleStatus'),button=$('#newsletterSendArticle'),article=newsletterArticles.find(x=>x.id===$('#newsletterArticleSelect').value);
+ if(!article){status.textContent='Sélectionne un article publié.';return}
+ if(!confirm('Envoyer « '+article.title+' » à tous les abonnés ayant confirmé leur adresse ?'))return;
+ button.disabled=true;status.textContent='Préparation de la newsletter…';
+ try{
+  const payload={subject:article.title,preheader:article.excerpt||'Découvrez cette actualité sur ActuScout.',html_content:articleNewsletterHtml(article)};
+  const cr=await api('/admin/newsletter/campaigns',{method:'POST',body:JSON.stringify(payload)}),campaign=await cr.json();
+  if(!cr.ok)throw Error(campaign.error||'Création de la campagne impossible.');
+  const url='/admin/newsletter/campaigns/'+encodeURIComponent(campaign.id)+'/send';let result;
+  do{status.textContent='Envoi en cours… '+(result?.total_sent||0)+' e-mail(s) déjà envoyé(s).';const r=await api(url,{method:'POST'}),d=await r.json();if(!r.ok)throw Error(d.error||'Envoi impossible.');result=d}while(result.status==='sending'&&result.remaining>0);
+  status.textContent=result.message||'Newsletter envoyée.';await loadNewsletter();
+ }catch(e){status.textContent=e.message}finally{button.disabled=false}
+});
 async function loadNewsletter(){
  const notice=$('#newsletterConfigNotice'),stats=$('#newsletterStats'),campaignHost=$('#newsletterCampaignList'),subsHost=$('#newsletterSubscriberList');
+ await loadNewsletterArticles();
  notice.textContent='Chargement de la configuration…';
  try{
   const r=await api('/admin/newsletter'),d=await r.json();if(!r.ok)throw Error(d.error||'Impossible de charger la newsletter.');
