@@ -110,6 +110,39 @@ async function withPasswordTools(response){if(!response.ok||!(response.headers.g
 
 async function api(req,env){const u=new URL(req.url),p=u.pathname,m=req.method;const gr=await googleRoutes(req,env,u);if(gr)return gr;
 
+if(p==='/api/newsletter/subscribe'&&m==='POST'){
+ const b=await req.json().catch(()=>({})),email=clean(b.email,254).toLowerCase(),consent=b.consent===true,trap=clean(b.website,200);
+ if(trap)return json({ok:true,message:'Merci pour votre intérêt.'},200);
+ if(!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/.test(email))return json({error:'Adresse e-mail invalide.'},400);
+ if(!consent)return json({error:'Veuillez confirmer votre accord pour recevoir la newsletter.'},400);
+ if(!env.RESEND_API_KEY||!env.ACTUSCOUT_EMAIL_FROM)return json({error:'Les inscriptions à la newsletter sont momentanément indisponibles. Réessayez plus tard.'},503);
+ const existing=await env.DB.prepare('SELECT id,status FROM newsletter_subscribers WHERE email=? COLLATE NOCASE').bind(email).first();
+ if(existing?.status==='active')return json({ok:true,message:'Cette adresse est déjà inscrite à la newsletter.'});
+ const id=existing?.id||crypto.randomUUID(),token=crypto.randomUUID()+'.'+crypto.randomUUID(),tokenHash=await crypto.subtle.digest('SHA-256',enc.encode(token)),hash=b64(tokenHash),now=new Date().toISOString();
+ if(existing)await env.DB.prepare("UPDATE newsletter_subscribers SET status='pending',confirmation_token_hash=?,consent_at=?,unsubscribed_at=NULL,updated_at=? WHERE id=?").bind(hash,now,now,id).run();
+ else await env.DB.prepare("INSERT INTO newsletter_subscribers(id,email,status,confirmation_token_hash,consent_at,source,created_at,updated_at) VALUES(?,?,'pending',?,?,?, ?,?)").bind(id,email,hash,now,'website',now,now).run();
+ const link='https://actuscout.com/api/newsletter/confirm?token='+encodeURIComponent(token);
+ const sent=await sendActuScoutMail(env,email,'Confirmez votre inscription à la newsletter ActuScout','<div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;color:#241631"><h2 style="color:#35145b">Bienvenue dans la newsletter ActuScout</h2><p>Vous avez demandé à recevoir les actualités du scoutisme africain publiées par ActuScout.</p><p>Confirmez votre adresse en cliquant sur le bouton ci-dessous :</p><p><a href="'+link+'" style="display:inline-block;background:#35145b;color:#fff;padding:13px 20px;text-decoration:none;border-radius:6px">Confirmer mon inscription</a></p><p>Si vous n’êtes pas à l’origine de cette demande, ignorez ce message.</p></div>');
+ if(!sent)return json({error:'Le message de confirmation n’a pas pu être envoyé. Réessayez plus tard.'},502);
+ return json({ok:true,message:'Un e-mail de confirmation vient de vous être envoyé.'},201);
+}
+if(p==='/api/newsletter/confirm'&&m==='GET'){
+ const token=clean(u.searchParams.get('token'),200),hash=token?b64(await crypto.subtle.digest('SHA-256',enc.encode(token))):'';
+ if(!hash)return new Response('Lien de confirmation invalide.',{status:400,headers:{'content-type':'text/plain; charset=utf-8'}});
+ const row=await env.DB.prepare("SELECT id FROM newsletter_subscribers WHERE confirmation_token_hash=? AND status='pending'").bind(hash).first();
+ if(!row)return new Response('<!doctype html><html lang="fr"><meta charset="utf-8"><title>Confirmation ActuScout</title><body style="font-family:Arial,sans-serif;padding:40px;text-align:center"><h1>Lien invalide ou déjà utilisé</h1><p>Cette confirmation a déjà été utilisée ou le lien a expiré.</p><a href="https://actuscout.com">Retour à ActuScout</a></body></html>',{status:400,headers:{'content-type':'text/html; charset=utf-8'}});
+ await env.DB.prepare("UPDATE newsletter_subscribers SET status='active',confirmation_token_hash=NULL,confirmed_at=?,updated_at=? WHERE id=?").bind(new Date().toISOString(),new Date().toISOString(),row.id).run();
+ return new Response('<!doctype html><html lang="fr"><meta charset="utf-8"><title>Inscription confirmée | ActuScout</title><body style="font-family:Arial,sans-serif;padding:40px;text-align:center"><h1 style="color:#35145b">Inscription confirmée</h1><p>Votre adresse est maintenant inscrite à la newsletter ActuScout.</p><a href="https://actuscout.com">Retour à ActuScout</a></body></html>',{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store'}});
+}
+if(p==='/api/newsletter/unsubscribe'&&(m==='GET'||m==='POST')){
+ const token=clean(u.searchParams.get('token'),240),parts=token.split('.'),id=parts[0],sig=parts[1];
+ if(!id||!sig||sig!==await mac(env.SESSION_SECRET||'', 'newsletter-unsubscribe:'+id))return new Response('Lien de désinscription invalide.',{status:400,headers:{'content-type':'text/plain; charset=utf-8'}});
+ const result=await env.DB.prepare("UPDATE newsletter_subscribers SET status='unsubscribed',unsubscribed_at=?,updated_at=? WHERE id=?").bind(new Date().toISOString(),new Date().toISOString(),id).run();
+ const html=result.meta?.changes?'<h1>Désinscription confirmée</h1><p>Vous ne recevrez plus la newsletter ActuScout.</p>':'<h1>Adresse déjà désinscrite</h1><p>Cette adresse ne recevra plus nos newsletters.</p>';
+ return new Response('<!doctype html><html lang="fr"><meta charset="utf-8"><title>Désinscription | ActuScout</title><body style="font-family:Arial,sans-serif;padding:40px;text-align:center">'+html+'<a href="https://actuscout.com">Retour à ActuScout</a></body></html>',{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store'}});
+}
+
+
 if(p==='/api/admin/documents'&&m==='GET'){if(!await authorized(req,env))return json({error:'Authentification requise.'},401);const rows=await env.DB.prepare('SELECT id,name,object_key,url,mime_type,size,created_at FROM admin_documents ORDER BY created_at DESC LIMIT 500').all();return json((rows.results||[]).map(x=>({...x,size_label:x.size>=1048576?(x.size/1048576).toFixed(1)+' Mo':Math.max(1,Math.round(x.size/1024))+' Ko'})))}
 if(p==='/api/admin/documents'&&m==='POST'){if(!await authorized(req,env))return json({error:'Authentification requise.'},401);if(!env.GALLERY||!env.R2_PUBLIC_BASE)return json({error:'Stockage R2 non configuré.'},503);const form=await req.formData(),file=form.get('file');if(!file||typeof file.arrayBuffer!=='function'||!file.size)return json({error:'Choisis un document.'},400);if(file.size>25*1024*1024)return json({error:'Document trop volumineux : limite de 25 Mo.'},413);const name=String(file.name||'document').split('/').join('_').split(String.fromCharCode(92)).join('_').slice(0,180),ext=(name.split('.').pop()||'').toLowerCase(),types={pdf:['application/pdf','application/octet-stream'],doc:['application/msword','application/octet-stream'],docx:['application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/octet-stream'],xls:['application/vnd.ms-excel','application/octet-stream'],xlsx:['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','application/octet-stream'],ppt:['application/vnd.ms-powerpoint','application/octet-stream'],pptx:['application/vnd.openxmlformats-officedocument.presentationml.presentation','application/octet-stream'],csv:['text/csv','text/plain','application/vnd.ms-excel','application/octet-stream'],txt:['text/plain','application/octet-stream']};if(!types[ext])return json({error:'Format non accepté. Utilise PDF, Word, Excel, PowerPoint, CSV ou TXT.'},415);const mime=types[ext][0],id=crypto.randomUUID(),key='documents/'+id+'.'+ext,url=(env.R2_PUBLIC_BASE.endsWith('/')?env.R2_PUBLIC_BASE.slice(0,-1):env.R2_PUBLIC_BASE)+'/'+key;await env.GALLERY.put(key,await file.arrayBuffer(),{httpMetadata:{contentType:mime,contentDisposition:'attachment; filename="'+name.split('"').join('_')+'"'}});try{await env.DB.prepare('INSERT INTO admin_documents(id,name,object_key,url,mime_type,size) VALUES(?,?,?,?,?,?)').bind(id,name,key,url,mime,file.size).run()}catch(e){await env.GALLERY.delete(key);throw e}return json({ok:true,id,name,url,message:'Document importé.'},201)}
 const adminDocument=p.match(/^\/api\/admin\/documents\/([^/]+)$/);
@@ -513,6 +546,63 @@ if(p==='/api/admin/featured'&&m==='GET'){const admin=await authorized(req,env),b
 if(p==='/api/admin/featured'&&m==='PUT'){const admin=await authorized(req,env),blogger=admin?null:await bloggerAuthorized(req,env);if(!admin&&(!blogger||!await bloggerCan(env,blogger.id,'feature_articles')))return json({error:'Permission insuffisante pour gérer les articles à la une.'},403);const b=await req.json().catch(()=>({})),ids=Array.isArray(b.article_ids)?[...new Set(b.article_ids.map(x=>clean(x,100)).filter(Boolean))].slice(0,20):[];const statements=[env.DB.prepare('DELETE FROM featured_articles')];ids.forEach((id,index)=>statements.push(env.DB.prepare("INSERT INTO featured_articles(article_id,position) SELECT id,? FROM articles WHERE id=? AND status='published'").bind(index,id)));await env.DB.batch(statements);return json({ok:true,count:ids.length})}
 const publicArticle=p.match(/^\/api\/public\/articles\/([^/]+)$/);if(publicArticle&&m==='GET'){const article=await env.DB.prepare("SELECT * FROM articles WHERE id=? AND status='published'").bind(publicArticle[1]).first();return article?json(article):json({error:'Article introuvable.'},404)}
 const pub=p.match(/^\/api\/public\/(albums|articles)$/);if(pub&&m==='GET'){const k=pub[1];if(k==='articles'){const page=Math.max(1,Math.min(10000,Number(u.searchParams.get('page'))||1)),limit=Math.max(1,Math.min(20,Number(u.searchParams.get('limit'))||10)),total=await env.DB.prepare("SELECT COUNT(*) AS total FROM articles WHERE status='published'").first(),rows=await env.DB.prepare("SELECT a.*,COALESCE(m.views,0) AS views,COALESCE(m.likes,0) AS likes,COALESCE(m.shares,0) AS shares,(SELECT COUNT(*) FROM article_comments c WHERE c.article_id=a.id AND c.status='approved') AS comments,(SELECT COUNT(*) FROM article_bookmarks b WHERE b.article_id=a.id) AS bookmarks FROM articles a LEFT JOIN article_metrics m ON m.article_id=a.id WHERE a.status='published' ORDER BY a.created_at DESC LIMIT ? OFFSET ?").bind(limit,(page-1)*limit).all();return json({articles:rows.results||[],page,limit,total:total?.total||0,pages:Math.max(1,Math.ceil((total?.total||0)/limit))})}const r=await env.DB.prepare("SELECT * FROM albums WHERE status='published' ORDER BY created_at DESC").all();return json(r.results||[])}
+
+if(p==='/api/admin/newsletter'&&m==='GET'){
+ if(!await authorized(req,env))return json({error:'Authentification requise.'},401);
+ const [stats,subs,campaigns]=await Promise.all([
+  env.DB.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) AS active, SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending, SUM(CASE WHEN status='unsubscribed' THEN 1 ELSE 0 END) AS unsubscribed FROM newsletter_subscribers").first(),
+  env.DB.prepare('SELECT id,email,status,consent_at,confirmed_at,created_at FROM newsletter_subscribers ORDER BY created_at DESC LIMIT 500').all(),
+  env.DB.prepare('SELECT id,subject,status,recipient_count,sent_count,created_at,sent_at,last_error FROM newsletter_campaigns ORDER BY created_at DESC LIMIT 100').all()
+ ]);
+ return json({stats:stats||{},subscribers:subs.results||[],campaigns:campaigns.results||[],email_configured:!!(env.RESEND_API_KEY&&env.ACTUSCOUT_EMAIL_FROM)});
+}
+if(p==='/api/admin/newsletter/campaigns'&&m==='POST'){
+ if(!await authorized(req,env))return json({error:'Authentification requise.'},401);
+ const b=await req.json().catch(()=>({})),subject=clean(b.subject,180),preheader=clean(b.preheader,220),raw=clean(b.html_content,50000),html=await sanitizeArticleHtml(raw);
+ if(subject.length<3||html.replace(/<[^>]*>/g,' ').trim().length<10)return json({error:'Objet et contenu de la newsletter obligatoires.'},400);
+ const id=crypto.randomUUID();
+ await env.DB.prepare("INSERT INTO newsletter_campaigns(id,subject,preheader,html_content,status) VALUES(?,?,?,?,'draft')").bind(id,subject,preheader,html).run();
+ return json({ok:true,id,message:'Brouillon de newsletter enregistré.'},201);
+}
+const newsletterSend=p.match(/^\\/api\\/admin\\/newsletter\\/campaigns\\/([^/]+)\\/send$/);
+if(newsletterSend&&m==='POST'){
+ if(!await authorized(req,env))return json({error:'Authentification requise.'},401);
+ if(!env.RESEND_API_KEY||!env.ACTUSCOUT_EMAIL_FROM)return json({error:'Envoi indisponible : configurez RESEND_API_KEY et ACTUSCOUT_EMAIL_FROM dans les secrets du Worker Cloudflare.'},503);
+ const campaign=await env.DB.prepare('SELECT * FROM newsletter_campaigns WHERE id=?').bind(newsletterSend[1]).first();
+ if(!campaign)return json({error:'Newsletter introuvable.'},404);
+ if(campaign.status==='sent')return json({error:'Cette newsletter a déjà été envoyée.'},409);
+ const activeCount=await env.DB.prepare("SELECT COUNT(*) AS total FROM newsletter_subscribers WHERE status='active'").first();
+ if(campaign.status==='draft')await env.DB.prepare("UPDATE newsletter_campaigns SET status='sending',recipient_count=?,updated_at=? WHERE id=?").bind(activeCount?.total||0,new Date().toISOString(),campaign.id).run();
+ const batch=await env.DB.prepare("SELECT s.id,s.email FROM newsletter_subscribers s LEFT JOIN newsletter_deliveries d ON d.subscriber_id=s.id AND d.campaign_id=? WHERE s.status='active' AND d.id IS NULL ORDER BY s.created_at ASC LIMIT 100").bind(campaign.id).all();
+ const recipients=batch.results||[];
+ if(!recipients.length){
+  await env.DB.prepare("UPDATE newsletter_campaigns SET status='sent',sent_at=?,updated_at=?,last_error=NULL WHERE id=?").bind(new Date().toISOString(),new Date().toISOString(),campaign.id).run();
+  return json({ok:true,status:'sent',sent:0,remaining:0,message:'Newsletter envoyée à tous les abonnés actifs.'});
+ }
+ const messages=await Promise.all(recipients.map(async subscriber=>{
+  const token=subscriber.id+'.'+await mac(env.SESSION_SECRET||'', 'newsletter-unsubscribe:'+subscriber.id);
+  const unsubscribe='https://actuscout.com/api/newsletter/unsubscribe?token='+encodeURIComponent(token);
+  const body='<div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;color:#241631;line-height:1.65"><div style="background:#35145b;padding:22px;color:#fff"><strong>ACTUSCOUT</strong><div style="font-size:12px;opacity:.85">Actualités du scoutisme africain</div></div>'+(campaign.preheader?'<p style="color:#71677b">'+escapeHtml(campaign.preheader)+'</p>':'')+'<main style="padding:24px 18px">'+campaign.html_content+'</main><footer style="border-top:1px solid #eee;padding:18px;color:#71677b;font-size:12px">Vous recevez ce message car vous avez confirmé votre inscription à la newsletter ActuScout.<br><a href="'+unsubscribe+'">Se désinscrire</a></footer></div>';
+  return {from:env.ACTUSCOUT_EMAIL_FROM,to:[subscriber.email],subject:campaign.subject,html:body,headers:{'List-Unsubscribe':'<'+unsubscribe+'>','List-Unsubscribe-Post':'List-Unsubscribe=One-Click'}};
+ }));
+ const response=await fetch('https://api.resend.com/emails/batch',{method:'POST',headers:{Authorization:'Bearer '+env.RESEND_API_KEY,'content-type':'application/json'},body:JSON.stringify(messages)});
+ const result=await response.json().catch(()=>({}));
+ if(!response.ok){
+  const reason=clean(result.message||result.error||'Erreur du fournisseur d’e-mail.',500);
+  await env.DB.prepare("UPDATE newsletter_campaigns SET status='failed',last_error=?,updated_at=? WHERE id=?").bind(reason,new Date().toISOString(),campaign.id).run();
+  return json({error:'Le fournisseur a refusé le lot : '+reason},502);
+ }
+ const ids=Array.isArray(result.data)?result.data:Array.isArray(result)?result:[];
+ const now=new Date().toISOString();
+ const statements=recipients.map((subscriber,index)=>env.DB.prepare("INSERT OR IGNORE INTO newsletter_deliveries(id,campaign_id,subscriber_id,provider_id,status,sent_at) VALUES(?,?,?,?, 'sent',?)").bind(crypto.randomUUID(),campaign.id,subscriber.id,ids[index]?.id||null,now));
+ if(statements.length)await env.DB.batch(statements);
+ const sentCount=await env.DB.prepare("SELECT COUNT(*) AS total FROM newsletter_deliveries WHERE campaign_id=? AND status='sent'").bind(campaign.id).first();
+ const remaining=await env.DB.prepare("SELECT COUNT(*) AS total FROM newsletter_subscribers s LEFT JOIN newsletter_deliveries d ON d.subscriber_id=s.id AND d.campaign_id=? WHERE s.status='active' AND d.id IS NULL").bind(campaign.id).first();
+ const complete=(remaining?.total||0)===0;
+ await env.DB.prepare("UPDATE newsletter_campaigns SET status=?,sent_count=?,sent_at=CASE WHEN ?=1 THEN ? ELSE sent_at END,last_error=NULL,updated_at=? WHERE id=?").bind(complete?'sent':'sending',sentCount?.total||0,complete?1:0,now,now,campaign.id).run();
+ return json({ok:true,status:complete?'sent':'sending',sent:recipients.length,total_sent:sentCount?.total||0,remaining:remaining?.total||0,message:complete?'Newsletter envoyée à tous les abonnés.':recipients.length+' e-mails envoyés. Il reste '+(remaining?.total||0)+' destinataire(s).'});
+}
+
 if(!await authorized(req,env))return json({error:'Authentification requise.'},401);if(p==='/api/me')return json({authenticated:true});
 const match=p.match(/^\/api\/(albums|articles)(?:\/([^/]+))?$/);if(!match)return json({error:'Route introuvable.'},404);const kind=match[1],id=match[2],cfg=config[kind];
 if(m==='GET'&&!id){const r=await env.DB.prepare('SELECT * FROM '+kind+' ORDER BY created_at DESC').all();return json(r.results||[])}
