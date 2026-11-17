@@ -113,7 +113,7 @@ async function api(req,env){const u=new URL(req.url),p=u.pathname,m=req.method;c
 if(p==='/api/newsletter/subscribe'&&m==='POST'){
  const b=await req.json().catch(()=>({})),email=clean(b.email,254).toLowerCase(),consent=b.consent===true,trap=clean(b.website,200);
  if(trap)return json({ok:true,message:'Merci pour votre intérêt.'},200);
- if(!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/.test(email))return json({error:'Adresse e-mail invalide.'},400);
+ const at=email.indexOf('@'),dot=email.lastIndexOf('.');if(email.length>254||at<=0||at!==email.lastIndexOf('@')||dot<at+2||dot===email.length-1||email.split('').some(c=>c.charCodeAt(0)<=32))return json({error:'Adresse e-mail invalide.'},400);
  if(!consent)return json({error:'Veuillez confirmer votre accord pour recevoir la newsletter.'},400);
  if(!env.RESEND_API_KEY||!env.ACTUSCOUT_EMAIL_FROM)return json({error:'Les inscriptions à la newsletter sont momentanément indisponibles. Réessayez plus tard.'},503);
  const existing=await env.DB.prepare('SELECT id,status FROM newsletter_subscribers WHERE email=? COLLATE NOCASE').bind(email).first();
