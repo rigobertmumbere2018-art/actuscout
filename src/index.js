@@ -516,6 +516,22 @@ if(p==='/api/admin/change-password'&&m==='POST'){
 }
 if(p==='/api/login'&&m==='POST'){const b=await req.json().catch(()=>({}));if(!env.SESSION_SECRET)return json({error:'Configuration de sécurité manquante.'},503);const suppliedUsername=String(b.username||'').trim(),adminEmail='rigobertmumbere2018@gmail.com';const override=await env.DB.prepare("SELECT password_hash FROM admin_credentials WHERE id='admin'").first();const passwordOk=override?await mac(env.SESSION_SECRET,String(b.password||''))===override.password_hash:(!!env.ADMIN_PASSWORD&&b.password===env.ADMIN_PASSWORD);if(!passwordOk||(!env.ADMIN_USERNAME&&!override)||(suppliedUsername!==env.ADMIN_USERNAME&&suppliedUsername.toLowerCase()!==adminEmail))return json({error:'Identifiant ou mot de passe incorrect. Utilise « Mot de passe oublié » si nécessaire.'},401);return json({ok:true},200,{'set-cookie':COOKIE+'='+await makeSession(env,env.ADMIN_USERNAME||adminEmail)+'; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=28800'})}
 if(p==='/api/logout'&&m==='POST')return json({ok:true},200,{'set-cookie':COOKIE+'=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0'});
+
+if(p==='/api/admin/audience'&&m==='GET'){
+ if(!await authorized(req,env))return json({error:'Authentification requise.'},401);
+ const [pages,metrics,top,revenue,wallets,earnings,payouts,settings]=await Promise.all([
+  env.DB.prepare('SELECT COUNT(*) AS total FROM site_page_views').first(),
+  env.DB.prepare('SELECT COALESCE(SUM(views),0) AS views,COALESCE(SUM(likes),0) AS likes,COALESCE(SUM(shares),0) AS shares FROM article_metrics').first(),
+  env.DB.prepare("SELECT a.id,a.title,COALESCE(m.views,0) AS views,COALESCE(m.likes,0) AS likes,COALESCE(m.shares,0) AS shares FROM articles a LEFT JOIN article_metrics m ON m.article_id=a.id WHERE a.status='published' ORDER BY (COALESCE(m.views,0)+COALESCE(m.likes,0)+COALESCE(m.shares,0)) DESC,a.created_at DESC LIMIT 5").all(),
+  env.DB.prepare('SELECT COUNT(*) AS count,COALESCE(SUM(gross_amount),0) AS gross,COALESCE(SUM(net_amount),0) AS net FROM monetization_revenues').first(),
+  env.DB.prepare('SELECT COUNT(*) AS count,COALESCE(SUM(available_balance),0) AS available,COALESCE(SUM(pending_balance),0) AS pending,COALESCE(SUM(reserved_balance),0) AS reserved,COALESCE(SUM(paid_balance),0) AS paid FROM blogger_wallets').first(),
+  env.DB.prepare('SELECT COUNT(*) AS count,COALESCE(SUM(net_earning),0) AS total FROM blogger_earnings').first(),
+  env.DB.prepare('SELECT status,COUNT(*) AS count,COALESCE(SUM(amount),0) AS amount FROM payout_requests GROUP BY status').all(),
+  env.DB.prepare('SELECT setting_key,setting_value FROM monetization_settings ORDER BY setting_key').all()
+ ]);
+ return json({page_views:pages?.total||0,metrics:metrics||{},top_articles:top.results||[],revenue:revenue||{},wallets:wallets||{},earnings:earnings||{},payouts:payouts.results||[],settings:settings.results||[]});
+}
+
 const ranking=u.pathname==='/api/public/rankings'&&m==='GET';
  if(ranking){const by=['views','likes','shares','comments','bookmarks'].includes(u.searchParams.get('by'))?u.searchParams.get('by'):'views',limit=Math.min(20,Math.max(1,Number(u.searchParams.get('limit'))||5));const rows=await env.DB.prepare("SELECT a.id,a.title,a.category,a.cover_url,a.author,a.created_at,COALESCE(m.views,0) AS views,COALESCE(m.likes,0) AS likes,COALESCE(m.shares,0) AS shares,(SELECT COUNT(*) FROM article_comments c WHERE c.article_id=a.id AND c.status='approved') AS comments,(SELECT COUNT(*) FROM article_bookmarks b WHERE b.article_id=a.id) AS bookmarks FROM articles a LEFT JOIN article_metrics m ON m.article_id=a.id WHERE a.status='published' ORDER BY "+by+" DESC,a.created_at DESC LIMIT ?").bind(limit).all();return json(rows.results||[])}
  if(p==='/api/public/trends'&&m==='GET'){const rows=await env.DB.prepare("SELECT a.id,a.title,a.category,a.cover_url,a.author,a.created_at,COALESCE(m.views,0) AS views,COALESCE(m.likes,0) AS likes,COALESCE(m.shares,0) AS shares,(COALESCE(m.views,0)+COALESCE(m.likes,0)+COALESCE(m.shares,0)) AS trend_score FROM articles a LEFT JOIN article_metrics m ON m.article_id=a.id WHERE a.status='published' ORDER BY trend_score DESC,a.created_at DESC LIMIT 6").all();return json((rows.results||[]).map(a=>({...a,url:'/actualites/'+articleSlug(a.title,a.id)})))}
