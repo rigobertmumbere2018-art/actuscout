@@ -35,7 +35,7 @@ Le reste du bucket R2 est réservé aux médias publiés, aux documents et aux s
 - `public/index.html` est synchronisé avec `site/index.html`.
 - `public/actualites.html` est synchronisé avec `site/actualites.html`.
 - `public/admin.html` est synchronisé avec `site/admin.html`.
-- Le Worker `actuscout` est déployé en version 296.
+- Le Worker `actuscout` est déployé en version 301 (19 novembre 2026, 17:02 UTC).
 - Les bindings D1, R2, ASSETS et les secrets existants ont été conservés.
 - Les anciennes copies R2 de l'accueil et de l'administration sont archivées dans `backups/`.
 - Une sauvegarde logique de la base D1 est conservée dans `backups/actuscout-d1-logical-snapshot-2026-11-19.json`.
