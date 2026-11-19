@@ -20,3 +20,8 @@ Ce dépôt contient le Worker Cloudflare, les pages publiques et d'administratio
 5. Configurer Google Photos Picker selon `GOOGLE_PHOTOS_CONFIGURATION_FR.txt`.
 
 Le dépôt ne contient volontairement aucun identifiant OAuth secret, mot de passe d'administration ou clé de chiffrement.
+
+
+## Source officielle
+
+Voir [SOURCE_OF_TRUTH_FR.md](SOURCE_OF_TRUTH_FR.md) pour les règles de source de vérité, de sauvegarde, de migration des images et de déploiement sans perte de données.
