@@ -758,7 +758,7 @@ function injectPublicFaq(html){
 </script>`;
  return html.includes('</body>')?html.replace('</body>',widget+'</body>'):html+widget;
 }
-const FAVICON_LINKS='<link rel="icon" type="image/png" sizes="96x96" href="https://actuscout.com/favicon.png"><link rel="shortcut icon" href="https://actuscout.com/favicon.ico"><link rel="apple-touch-icon" sizes="180x180" href="https://actuscout.com/apple-touch-icon.png"><link rel="icon" type="image/svg+xml" href="https://actuscout.com/favicon.svg">';
+const FAVICON_LINKS='<link rel="icon" type="image/svg+xml" href="/favicon.svg">';
 async function withFavicon(response){
  if(!response||!response.ok)return response;
  const type=response.headers.get('content-type')||'';
